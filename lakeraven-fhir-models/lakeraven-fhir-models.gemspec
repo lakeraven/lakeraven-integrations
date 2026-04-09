@@ -28,6 +28,6 @@ Gem::Specification.new do |spec|
 
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "activemodel", "~> 7.1"
+  spec.add_dependency "activemodel", ">= 7.1"
   spec.add_dependency "fhir_models", "~> 4.3"
 end
