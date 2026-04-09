@@ -30,6 +30,40 @@ module Lakeraven
           assert_raises(NotImplementedError) { @edi.process_remittance("REM-001") }
         end
       end
+
+      # -- Lakeraven::Integrations configuration registry --
+
+      class ConfigurationTest < Minitest::Test
+        def teardown
+          Lakeraven::Integrations.reset_configuration!
+        end
+
+        def test_configure_sets_edi_adapter
+          mock = Mock.new
+          Lakeraven::Integrations.configure do |config|
+            config.edi_adapter = mock
+          end
+
+          assert_equal mock, Lakeraven::Integrations.edi_adapter
+        end
+
+        def test_edi_adapter_returns_nil_when_not_configured
+          assert_nil Lakeraven::Integrations.edi_adapter
+        end
+
+        def test_reset_configuration_clears_adapters
+          Lakeraven::Integrations.configure { |c| c.edi_adapter = Mock.new }
+          Lakeraven::Integrations.reset_configuration!
+
+          assert_nil Lakeraven::Integrations.edi_adapter
+        end
+
+        def test_configure_yields_configuration_object
+          Lakeraven::Integrations.configure do |config|
+            assert_instance_of Lakeraven::Integrations::Configuration, config
+          end
+        end
+      end
     end
   end
 end
