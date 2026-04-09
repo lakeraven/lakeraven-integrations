@@ -157,6 +157,55 @@ module Lakeraven
         assert_equal "medicare_a", request.coverage_type
       end
 
+      # -- Adapter-needed supplemental fields (payer, subscriber, provider) --
+      # These are Lakeraven extensions beyond the strict FHIR R4 CER shape,
+      # required by adapters like DirectX12 and Stedi to build 270 payloads.
+
+      def test_stores_payer_id
+        request = CoverageEligibilityRequest.new(
+          patient_dfn: "123", coverage_type: "medicaid", payer_id: "BCBS_AK"
+        )
+        assert_equal "BCBS_AK", request.payer_id
+      end
+
+      def test_stores_subscriber_fields
+        request = CoverageEligibilityRequest.new(
+          patient_dfn: "123",
+          coverage_type: "medicaid",
+          subscriber_id: "ABC123",
+          subscriber_first_name: "Alice",
+          subscriber_last_name: "Anderson",
+          subscriber_dob: "1970-01-01"
+        )
+        assert_equal "ABC123", request.subscriber_id
+        assert_equal "Alice", request.subscriber_first_name
+        assert_equal "Anderson", request.subscriber_last_name
+        assert_equal "1970-01-01", request.subscriber_dob
+      end
+
+      def test_stores_provider_fields
+        request = CoverageEligibilityRequest.new(
+          patient_dfn: "123",
+          coverage_type: "medicaid",
+          provider_npi: "1234567890",
+          provider_name: "Yakama Clinic"
+        )
+        assert_equal "1234567890", request.provider_npi
+        assert_equal "Yakama Clinic", request.provider_name
+      end
+
+      def test_stores_service_type
+        request = CoverageEligibilityRequest.new(
+          patient_dfn: "123", coverage_type: "medicaid", service_type: "88"
+        )
+        assert_equal "88", request.service_type
+      end
+
+      def test_service_type_defaults_to_benefits_code
+        request = CoverageEligibilityRequest.new(patient_dfn: "123", coverage_type: "medicaid")
+        assert_equal "30", request.service_type
+      end
+
       def test_from_fhir_defaults_purpose_when_missing
         fhir_hash = {
           patient: { reference: "Patient/123" },

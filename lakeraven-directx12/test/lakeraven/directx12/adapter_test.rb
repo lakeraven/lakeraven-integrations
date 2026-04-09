@@ -31,6 +31,28 @@ module Lakeraven
         assert_equal "https://edi.example.com/submit", @adapter.endpoint
       end
 
+      # -- FHIR-native check_eligibility contract --
+
+      def test_check_eligibility_accepts_fhir_request_decorator
+        request = Lakeraven::Fhir::CoverageEligibilityRequest.new(
+          patient_dfn: "PAT-1",
+          coverage_type: "medicaid",
+          payer_id: "BCBS",
+          subscriber_id: "SUB-1",
+          subscriber_first_name: "Alice",
+          subscriber_last_name: "Anderson",
+          subscriber_dob: "1970-01-01",
+          provider_npi: "1234567890"
+        )
+        # The adapter builds an envelope and tries to submit via HTTPS; we
+        # only verify that it accepts the FHIR decorator and exercises
+        # build_x12_270 without raising.
+        envelope = @adapter.send(:build_x12_270, request)
+        assert envelope.start_with?("ISA*")
+        assert_includes envelope, "NM1*IL*1******MI*SUB-1~"
+        assert_includes envelope, "NM1*1P*2*****XX*1234567890~"
+      end
+
       # -- X12 envelope generation --
 
       def test_build_x12_270_has_correct_se_segment_count
@@ -58,15 +80,15 @@ module Lakeraven
       end
 
       def test_build_x12_270_includes_patient_and_provider_data
-        envelope = @adapter.send(:build_x12_270,
+        request = Lakeraven::Fhir::CoverageEligibilityRequest.new(
+          patient_dfn: "PAT-1",
+          coverage_type: "medicaid",
           payer_id: "BCBS",
           subscriber_id: "PAT-1",
-          subscriber_first_name: "Alice",
-          subscriber_last_name: "Anderson",
-          subscriber_dob: "1970-01-01",
           provider_npi: "9876543210",
           service_type: "30"
         )
+        envelope = @adapter.send(:build_x12_270, request)
         assert_includes envelope, "NM1*IL*1******MI*PAT-1~"
         assert_includes envelope, "NM1*1P*2*****XX*9876543210~"
         assert_includes envelope, "EQ*30~"
@@ -103,9 +125,10 @@ module Lakeraven
 
       # -- Response parser return types --
 
-      def test_parse_271_response_returns_eligibility_response
-        result = @adapter.send(:parse_271_response, "NM1*PR*2*ACME~")
-        assert_instance_of Lakeraven::Integrations::Edi::EligibilityResponse, result
+      def test_parse_271_response_returns_coverage_eligibility_response
+        request = eligibility_request
+        result = @adapter.send(:parse_271_response, "NM1*PR*2*ACME~", request)
+        assert_instance_of Lakeraven::Fhir::CoverageEligibilityResponse, result
       end
 
       def test_parse_claim_response_returns_claim_response
@@ -178,7 +201,9 @@ module Lakeraven
       end
 
       def eligibility_request
-        {
+        Lakeraven::Fhir::CoverageEligibilityRequest.new(
+          patient_dfn: "PAT-1",
+          coverage_type: "medicaid",
           payer_id: "BCBS",
           subscriber_id: "PAT-1",
           subscriber_first_name: "Alice",
@@ -186,7 +211,7 @@ module Lakeraven
           subscriber_dob: "1970-01-01",
           provider_npi: "1234567890",
           service_type: "30"
-        }
+        )
       end
 
       def claim_request(claim_type)

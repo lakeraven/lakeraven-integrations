@@ -4,6 +4,7 @@ require "net/http"
 require "json"
 require "date"
 
+require "lakeraven/fhir"
 require "lakeraven/integrations/edi/base"
 
 module Lakeraven
@@ -35,7 +36,7 @@ module Lakeraven
       def check_eligibility(request)
         envelope = build_x12_270(request)
         response = submit_transaction(envelope)
-        parse_271_response(response)
+        parse_271_response(response, request)
       end
 
       def submit_claim(request)
@@ -70,9 +71,9 @@ module Lakeraven
 
       def build_x12_270(request)
         control_number = generate_control_number
-        subscriber_id = request[:subscriber_id]
-        provider_npi = request[:provider_npi]
-        service_codes = Array(request[:service_type] || "30").join("^")
+        subscriber_id = request.subscriber_id || request.patient_dfn
+        provider_npi = request.provider_npi
+        service_codes = Array(request.service_type).join("^")
 
         transaction_segments = [
           "ST*270*#{control_number}~",
@@ -120,16 +121,14 @@ module Lakeraven
       # won't pass trading partner validation.
       # -----------------------------------------------------------------
 
-      def parse_271_response(raw)
-        Lakeraven::Integrations::Edi::EligibilityResponse.new(
-          eligible: !raw.nil?,
-          payer_name: extract_x12_value(raw, "NM1", 3) || "Unknown",
-          subscriber_id: extract_x12_value(raw, "NM1*IL", 9),
-          group_number: nil,
-          coverage_start: nil,
-          coverage_end: nil,
-          service_types: [],
-          raw_response: { raw: raw }
+      def parse_271_response(raw, request)
+        eligible = !raw.nil?
+        Lakeraven::Fhir::CoverageEligibilityResponse.new(
+          patient_dfn: request.patient_dfn,
+          coverage_type: request.coverage_type,
+          status: eligible ? "enrolled" : "not_enrolled",
+          service_date: request.service_date,
+          insurer_name: extract_x12_value(raw, "NM1", 3) || "Unknown"
         )
       end
 

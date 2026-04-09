@@ -30,6 +30,8 @@ Gem::Specification.new do |spec|
 
   spec.require_paths = ["lib"]
 
-  # Core gem is deliberately Rails-free and dependency-free. Money fields
-  # use integer cents throughout, so no BigDecimal dependency is required.
+  # Core gem is deliberately Rails-free. Money fields use integer cents.
+  # Depends on lakeraven-fhir-models for FHIR R4 request/response types
+  # on the Edi::Base interface.
+  spec.add_dependency "lakeraven-fhir-models", "~> 0.1"
 end

@@ -10,29 +10,41 @@ module Lakeraven
           @edi = Mock.new
         end
 
-        def test_check_eligibility_returns_eligibility_response
-          result = @edi.check_eligibility(
+        # -- check_eligibility: FHIR-native --
+
+        def test_check_eligibility_returns_coverage_eligibility_response
+          request = Lakeraven::Fhir::CoverageEligibilityRequest.new(
+            patient_dfn: "123",
+            coverage_type: "medicaid",
             payer_id: "BCBS",
             subscriber_id: "1",
             subscriber_first_name: "Alice",
             subscriber_last_name: "Anderson",
             subscriber_dob: "1970-01-01",
-            provider_npi: "1234567890",
-            service_type: "30"
+            provider_npi: "1234567890"
           )
 
-          assert_instance_of EligibilityResponse, result
-          assert result.eligible
-          assert result.covered?
-          assert_equal "Mock Medicaid", result.payer_name
-          assert_equal "MOCK-1", result.subscriber_id
-          assert_includes result.service_types, "30"
+          result = @edi.check_eligibility(request)
+
+          assert_instance_of Lakeraven::Fhir::CoverageEligibilityResponse, result
+          assert result.enrolled?
+          assert result.active_coverage?
+          assert_equal "123", result.patient_dfn
         end
 
-        def test_check_eligibility_defaults_service_type
-          result = @edi.check_eligibility(subscriber_id: "X")
-          assert_includes result.service_types, "30"
+        def test_check_eligibility_returns_mock_coverage_details
+          request = Lakeraven::Fhir::CoverageEligibilityRequest.new(
+            patient_dfn: "123",
+            coverage_type: "medicaid"
+          )
+
+          result = @edi.check_eligibility(request)
+
+          refute_nil result.start_date
+          refute_nil result.end_date
         end
+
+        # -- submit_claim: still hash-shaped --
 
         def test_submit_claim_returns_claim_response_with_provided_id
           result = @edi.submit_claim(claim_id: "CLM-TEST")
@@ -50,6 +62,8 @@ module Lakeraven
           assert result.claim_id.start_with?("CLM-")
         end
 
+        # -- check_claim_status: still hash-shaped --
+
         def test_check_claim_status_returns_status_response_with_integer_cents
           result = @edi.check_claim_status("CLM-001")
 
@@ -60,6 +74,8 @@ module Lakeraven
           assert_equal 150_000, result.total_charge_cents
           assert_equal 120_000, result.paid_amount_cents
         end
+
+        # -- process_remittance: still hash-shaped --
 
         def test_process_remittance_returns_array_of_remittance_responses
           results = @edi.process_remittance(claim_id: "CLM-001")

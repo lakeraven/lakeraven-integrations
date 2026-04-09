@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "lakeraven/fhir"
+
 module Lakeraven
   module Integrations
     module Edi
@@ -20,25 +22,37 @@ module Lakeraven
       # Engines (corvid, lakeraven-ehr) depend only on this interface. SaaS
       # shells wire a concrete adapter instance into the interface slot at boot.
       #
+      # --- FHIR-native interface ---
+      #
+      # check_eligibility takes and returns Lakeraven::Fhir::* decorators
+      # around FHIR R4 resources. Concrete adapters translate between the
+      # FHIR resources and their vendor-specific format internally. Engines
+      # (corvid, lakeraven-ehr) speak only FHIR; they never see X12 segments
+      # or vendor JSON shapes.
+      #
+      # submit_claim, check_claim_status, and process_remittance are still
+      # hash-shaped (X12-flavored) — they will migrate to FHIR Claim,
+      # ClaimResponse, and ExplanationOfBenefit decorators once those
+      # resource types are added to lakeraven-fhir-models.
+      #
       # --- Money representation ---
       #
-      # All money fields are integer cents (or minor currency units). No
-      # BigDecimal, no Float. Callers are responsible for converting to/from
-      # whatever representation they use internally. This avoids precision
-      # issues, simplifies serialization, and matches how most payment systems
-      # represent amounts on the wire.
+      # All money fields on hash-shaped responses are integer cents. No
+      # BigDecimal, no Float. Avoids precision issues and matches how most
+      # payment systems represent amounts on the wire.
       class Base
         # Check patient eligibility with a payer (270/271).
         #
-        # @param request [Hash] eligibility request with keys:
-        #   :payer_id                (String, required) trading partner ID
-        #   :subscriber_id           (String, required)
-        #   :subscriber_first_name   (String, required)
-        #   :subscriber_last_name    (String, required)
-        #   :subscriber_dob          (String "YYYY-MM-DD", required)
-        #   :provider_npi            (String, required)
-        #   :service_type            (String, optional; default "30")
-        # @return [EligibilityResponse]
+        # @param request [Lakeraven::Fhir::CoverageEligibilityRequest]
+        #   FHIR CoverageEligibilityRequest decorator carrying the standard
+        #   FHIR fields (patient.reference, insurer.reference, item.category,
+        #   servicedDate) plus Lakeraven extensions needed for adapter payload
+        #   construction (payer_id, subscriber_id, subscriber_first_name,
+        #   subscriber_last_name, subscriber_dob, provider_npi, service_type).
+        # @return [Lakeraven::Fhir::CoverageEligibilityResponse]
+        #   FHIR CoverageEligibilityResponse decorator with enrolled/
+        #   not_enrolled/pending/denied/exhausted/error status and, when
+        #   applicable, coverage period and plan details.
         def check_eligibility(request)
           raise NotImplementedError, "#{self.class}#check_eligibility not implemented"
         end
@@ -98,24 +112,12 @@ module Lakeraven
       # -----------------------------------------------------------------
       # Response value objects
       #
-      # All money fields are integer cents. Callers multiply/divide by 100
-      # (or their currency's minor-unit factor) when converting to display.
+      # Eligibility uses the FHIR-native Lakeraven::Fhir decorators from
+      # lakeraven-fhir-models. The claim / status / remittance responses
+      # below remain hash-shaped Data classes with integer-cent money
+      # until Claim / ClaimResponse / ExplanationOfBenefit decorators are
+      # added to lakeraven-fhir-models.
       # -----------------------------------------------------------------
-
-      EligibilityResponse = Data.define(
-        :eligible,        # Boolean
-        :payer_name,      # String
-        :subscriber_id,   # String
-        :group_number,    # String or nil
-        :coverage_start,  # Date or nil
-        :coverage_end,    # Date or nil
-        :service_types,   # Array of covered service type codes
-        :raw_response     # Hash — full parsed 271 or adapter-specific payload
-      ) do
-        def covered?
-          eligible == true
-        end
-      end
 
       ClaimResponse = Data.define(
         :accepted,        # Boolean

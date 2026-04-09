@@ -2,8 +2,9 @@ source "https://rubygems.org"
 
 gemspec
 
-# Depend on the sibling core gem via path during monorepo development.
+# Sibling gems in the monorepo, resolved via path during dev.
 gem "lakeraven-integrations", path: "../lakeraven-integrations"
+gem "lakeraven-fhir-models", path: "../lakeraven-fhir-models"
 
 gem "rake", "~> 13.0"
 gem "minitest", "~> 5.0"

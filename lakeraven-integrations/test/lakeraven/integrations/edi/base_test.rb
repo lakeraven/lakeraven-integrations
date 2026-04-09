@@ -11,7 +11,10 @@ module Lakeraven
         end
 
         def test_check_eligibility_raises_not_implemented
-          assert_raises(NotImplementedError) { @edi.check_eligibility({}) }
+          request = Lakeraven::Fhir::CoverageEligibilityRequest.new(
+            patient_dfn: "123", coverage_type: "medicaid"
+          )
+          assert_raises(NotImplementedError) { @edi.check_eligibility(request) }
         end
 
         def test_submit_claim_raises_not_implemented
@@ -28,24 +31,6 @@ module Lakeraven
       end
 
       class ResponseValueObjectsTest < Minitest::Test
-        def test_eligibility_response_covered_when_eligible
-          response = EligibilityResponse.new(
-            eligible: true, payer_name: "Test", subscriber_id: "123",
-            group_number: nil, coverage_start: nil, coverage_end: nil,
-            service_types: [], raw_response: {}
-          )
-          assert response.covered?
-        end
-
-        def test_eligibility_response_not_covered_when_not_eligible
-          response = EligibilityResponse.new(
-            eligible: false, payer_name: "Test", subscriber_id: "123",
-            group_number: nil, coverage_start: nil, coverage_end: nil,
-            service_types: [], raw_response: {}
-          )
-          refute response.covered?
-        end
-
         def test_claim_response_success_when_accepted
           response = ClaimResponse.new(
             accepted: true, claim_id: "C1", tracking_number: "T1",

@@ -27,8 +27,10 @@ module Lakeraven
 
       def initialize(attributes_or_resource = {})
         fhir = if attributes_or_resource.is_a?(::FHIR::CoverageEligibilityRequest)
+          @lakeraven_attrs = {}
           attributes_or_resource
         else
+          @lakeraven_attrs = attributes_or_resource
           build_fhir(attributes_or_resource)
         end
         super(fhir)
@@ -72,6 +74,45 @@ module Lakeraven
 
       def provider_ien
         provider&.reference&.sub(/\APractitioner\//, "")
+      end
+
+      # -- Adapter-needed supplemental fields --
+      #
+      # These are Lakeraven extensions beyond the strict FHIR R4 CER shape,
+      # carried on the decorator so adapters (DirectX12, Stedi) have all the
+      # data they need to build their vendor payloads. They are NOT serialized
+      # into the wrapped FHIR resource; they live in the decorator only.
+
+      def payer_id
+        @lakeraven_attrs&.dig(:payer_id)
+      end
+
+      def subscriber_id
+        @lakeraven_attrs&.dig(:subscriber_id)
+      end
+
+      def subscriber_first_name
+        @lakeraven_attrs&.dig(:subscriber_first_name)
+      end
+
+      def subscriber_last_name
+        @lakeraven_attrs&.dig(:subscriber_last_name)
+      end
+
+      def subscriber_dob
+        @lakeraven_attrs&.dig(:subscriber_dob)
+      end
+
+      def provider_npi
+        @lakeraven_attrs&.dig(:provider_npi)
+      end
+
+      def provider_name
+        @lakeraven_attrs&.dig(:provider_name)
+      end
+
+      def service_type
+        @lakeraven_attrs&.dig(:service_type) || "30"
       end
 
       # -- FHIR hash serialization (backward compat with tests / consumers) --
