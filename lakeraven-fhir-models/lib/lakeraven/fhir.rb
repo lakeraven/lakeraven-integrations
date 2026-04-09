@@ -9,6 +9,9 @@ require_relative "fhir/version"
 require_relative "fhir/coverage"
 require_relative "fhir/coverage_eligibility_request"
 require_relative "fhir/coverage_eligibility_response"
+require_relative "fhir/claim"
+require_relative "fhir/claim_response"
+require_relative "fhir/explanation_of_benefit"
 
 module Lakeraven
   # FHIR R4 resource type definitions for Lakeraven integrations.

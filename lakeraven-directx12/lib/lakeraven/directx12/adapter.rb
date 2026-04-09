@@ -40,15 +40,16 @@ module Lakeraven
       end
 
       def submit_claim(request)
+        @current_claim_request = request
         envelope = build_x12_837(request)
         response = submit_transaction(envelope)
-        parse_claim_response(response)
+        parse_claim_response(response, request)
       end
 
       def check_claim_status(claim_reference)
         envelope = build_x12_276(claim_reference)
         response = submit_transaction(envelope)
-        parse_277_response(response)
+        parse_277_response(response, claim_reference)
       end
 
       def process_remittance(remittance_reference_or_data)
@@ -90,7 +91,7 @@ module Lakeraven
         wrap_envelope("HS", "005010X279A1", control_number, transaction_segments)
       end
 
-      def build_x12_837(claim_params)
+      def build_x12_837(request)
         control_number = generate_control_number
 
         transaction_segments = [
@@ -132,42 +133,33 @@ module Lakeraven
         )
       end
 
-      def parse_claim_response(raw)
-        Lakeraven::Integrations::Edi::ClaimResponse.new(
-          accepted: !raw.nil?,
+      def parse_claim_response(raw, request)
+        accepted = !raw.nil?
+        Lakeraven::Fhir::ClaimResponse.new(
+          accepted: accepted,
           claim_id: extract_x12_value(raw, "CLM", 1) || "UNKNOWN",
           tracking_number: extract_x12_value(raw, "REF*TJ", 2),
-          errors: [],
-          raw_response: { raw: raw }
+          patient_dfn: request.patient_dfn
         )
       end
 
-      def parse_277_response(raw)
-        Lakeraven::Integrations::Edi::StatusResponse.new(
-          claim_id: extract_x12_value(raw, "REF*BLT", 2) || "UNKNOWN",
-          status_code: extract_x12_value(raw, "STC", 1),
-          status_description: extract_x12_value(raw, "STC", 4) || "",
-          effective_date: nil,
-          total_charge_cents: nil,
-          paid_amount_cents: nil,
-          raw_response: { raw: raw }
+      def parse_277_response(raw, claim_reference)
+        Lakeraven::Fhir::ClaimResponse.new(
+          accepted: !raw.nil?,
+          claim_id: claim_reference,
+          patient_dfn: "unknown"
         )
       end
 
-      # Returns Array<RemittanceResponse> — one element per claim payment in
-      # the input. DirectX12 parses a pre-received remittance data hash; for
-      # real 835 files with multiple claim payments, callers should split
-      # the file into per-claim hashes and pass each through this method,
-      # or extend the parser to iterate over CLP segments.
       def parse_835(remittance_data)
         [
-          Lakeraven::Integrations::Edi::RemittanceResponse.new(
+          Lakeraven::Fhir::ExplanationOfBenefit.new(
             claim_id: remittance_data[:claim_id] || "UNKNOWN",
+            patient_dfn: remittance_data[:patient_dfn] || "unknown",
             paid_amount_cents: remittance_data[:paid_amount_cents] || 0,
             patient_responsibility_cents: remittance_data[:patient_responsibility_cents] || 0,
             adjustments: remittance_data[:adjustments] || [],
-            service_lines: remittance_data[:service_lines] || [],
-            raw_response: remittance_data
+            service_lines: remittance_data[:service_lines] || []
           )
         ]
       end

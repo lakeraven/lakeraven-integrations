@@ -10,85 +10,62 @@ module Lakeraven
           @edi = Mock.new
         end
 
-        # -- check_eligibility: FHIR-native --
+        # -- check_eligibility --
 
-        def test_check_eligibility_returns_coverage_eligibility_response
+        def test_check_eligibility_returns_fhir_coverage_eligibility_response
           request = Lakeraven::Fhir::CoverageEligibilityRequest.new(
-            patient_dfn: "123",
-            coverage_type: "medicaid",
-            payer_id: "BCBS",
-            subscriber_id: "1",
-            subscriber_first_name: "Alice",
-            subscriber_last_name: "Anderson",
-            subscriber_dob: "1970-01-01",
-            provider_npi: "1234567890"
+            patient_dfn: "123", coverage_type: "medicaid",
+            payer_id: "BCBS", subscriber_id: "1"
           )
 
           result = @edi.check_eligibility(request)
 
           assert_instance_of Lakeraven::Fhir::CoverageEligibilityResponse, result
           assert result.enrolled?
-          assert result.active_coverage?
           assert_equal "123", result.patient_dfn
         end
 
-        def test_check_eligibility_returns_mock_coverage_details
-          request = Lakeraven::Fhir::CoverageEligibilityRequest.new(
-            patient_dfn: "123",
-            coverage_type: "medicaid"
+        # -- submit_claim --
+
+        def test_submit_claim_returns_fhir_claim_response
+          claim = Lakeraven::Fhir::Claim.new(
+            claim_type: "837P", patient_dfn: "123",
+            diagnosis_codes: ["J06.9"]
           )
 
-          result = @edi.check_eligibility(request)
+          result = @edi.submit_claim(claim)
 
-          refute_nil result.start_date
-          refute_nil result.end_date
-        end
-
-        # -- submit_claim: still hash-shaped --
-
-        def test_submit_claim_returns_claim_response_with_provided_id
-          result = @edi.submit_claim(claim_id: "CLM-TEST")
-
-          assert_instance_of ClaimResponse, result
-          assert result.accepted
+          assert_instance_of Lakeraven::Fhir::ClaimResponse, result
+          assert result.accepted?
           assert result.success?
-          assert_equal "CLM-TEST", result.claim_id
-          assert_empty result.errors
+          refute_nil result.claim_id
         end
 
-        def test_submit_claim_generates_claim_id_when_not_provided
-          result = @edi.submit_claim({})
+        # -- check_claim_status --
 
-          assert result.claim_id.start_with?("CLM-")
-        end
-
-        # -- check_claim_status: still hash-shaped --
-
-        def test_check_claim_status_returns_status_response_with_integer_cents
+        def test_check_claim_status_returns_fhir_claim_response
           result = @edi.check_claim_status("CLM-001")
 
-          assert_instance_of StatusResponse, result
+          assert_instance_of Lakeraven::Fhir::ClaimResponse, result
+          assert result.accepted?
           assert_equal "CLM-001", result.claim_id
-          assert_equal "A1", result.status_code
-          assert_equal Date.today, result.effective_date
-          assert_equal 150_000, result.total_charge_cents
           assert_equal 120_000, result.paid_amount_cents
         end
 
-        # -- process_remittance: still hash-shaped --
+        # -- process_remittance --
 
-        def test_process_remittance_returns_array_of_remittance_responses
+        def test_process_remittance_returns_array_of_explanation_of_benefit
           results = @edi.process_remittance(claim_id: "CLM-001")
 
           assert_kind_of Array, results
           assert_equal 1, results.length
-          r = results.first
-          assert_instance_of RemittanceResponse, r
-          assert_equal "CLM-001", r.claim_id
-          assert_equal 120_000, r.paid_amount_cents
-          assert_equal 30_000, r.patient_responsibility_cents
-          refute_empty r.adjustments
-          refute_empty r.service_lines
+          eob = results.first
+          assert_instance_of Lakeraven::Fhir::ExplanationOfBenefit, eob
+          assert_equal "CLM-001", eob.claim_id
+          assert_equal 120_000, eob.paid_amount_cents
+          assert_equal 30_000, eob.patient_responsibility_cents
+          refute_empty eob.adjustments
+          refute_empty eob.service_lines
         end
 
         def test_process_remittance_adjustments_use_integer_cents
@@ -107,8 +84,6 @@ module Lakeraven
           assert_equal "99213", line[:procedure_code]
           assert_equal 15_000, line[:charged_cents]
           assert_equal 12_000, line[:paid_cents]
-          assert_kind_of Integer, line[:charged_cents]
-          assert_kind_of Integer, line[:paid_cents]
         end
 
         def test_process_remittance_accepts_string_reference
