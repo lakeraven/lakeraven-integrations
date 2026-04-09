@@ -32,26 +32,34 @@ module Lakeraven
         @credentials = credentials
       end
 
-      def check_eligibility(patient_id, provider_npi, service_type_codes)
-        envelope = build_x12_270(patient_id, provider_npi, service_type_codes)
+      def check_eligibility(request)
+        envelope = build_x12_270(request)
         response = submit_transaction(envelope)
         parse_271_response(response)
       end
 
-      def submit_claim(claim_params)
-        envelope = build_x12_837(claim_params)
+      def submit_claim(request)
+        envelope = build_x12_837(request)
         response = submit_transaction(envelope)
         parse_claim_response(response)
       end
 
-      def check_claim_status(claim_id)
-        envelope = build_x12_276(claim_id)
+      def check_claim_status(claim_reference)
+        envelope = build_x12_276(claim_reference)
         response = submit_transaction(envelope)
         parse_277_response(response)
       end
 
-      def process_remittance(remittance_data)
-        parse_835(remittance_data)
+      def process_remittance(remittance_reference_or_data)
+        # DirectX12 operates on pre-received remittance data (push model or
+        # parsed 835 file) — it does not fetch by ID from any backend service.
+        unless remittance_reference_or_data.is_a?(Hash)
+          raise ArgumentError,
+            "DirectX12#process_remittance requires a pre-parsed remittance " \
+            "data hash. Fetching by identifier is not supported."
+        end
+
+        parse_835(remittance_reference_or_data)
       end
 
       private
@@ -60,9 +68,11 @@ module Lakeraven
       # X12 envelope builders
       # -----------------------------------------------------------------
 
-      def build_x12_270(patient_id, provider_npi, service_type_codes)
+      def build_x12_270(request)
         control_number = generate_control_number
-        service_codes = Array(service_type_codes).join("^")
+        subscriber_id = request[:subscriber_id]
+        provider_npi = request[:provider_npi]
+        service_codes = Array(request[:service_type] || "30").join("^")
 
         transaction_segments = [
           "ST*270*#{control_number}~",
@@ -72,7 +82,7 @@ module Lakeraven
           "HL*2*1*21*1~",
           "NM1*1P*2*****XX*#{provider_npi}~",
           "HL*3*2*22*0~",
-          "NM1*IL*1******MI*#{patient_id}~",
+          "NM1*IL*1******MI*#{subscriber_id}~",
           "EQ*#{service_codes}~"
         ]
 
@@ -139,21 +149,28 @@ module Lakeraven
           status_code: extract_x12_value(raw, "STC", 1),
           status_description: extract_x12_value(raw, "STC", 4) || "",
           effective_date: nil,
-          total_charge: nil,
-          paid_amount: nil,
+          total_charge_cents: nil,
+          paid_amount_cents: nil,
           raw_response: { raw: raw }
         )
       end
 
+      # Returns Array<RemittanceResponse> — one element per claim payment in
+      # the input. DirectX12 parses a pre-received remittance data hash; for
+      # real 835 files with multiple claim payments, callers should split
+      # the file into per-claim hashes and pass each through this method,
+      # or extend the parser to iterate over CLP segments.
       def parse_835(remittance_data)
-        Lakeraven::Integrations::Edi::RemittanceResponse.new(
-          claim_id: remittance_data[:claim_id] || "UNKNOWN",
-          paid_amount: BigDecimal(remittance_data[:paid_amount]&.to_s || "0"),
-          patient_responsibility: BigDecimal(remittance_data[:patient_responsibility]&.to_s || "0"),
-          adjustments: remittance_data[:adjustments] || [],
-          service_lines: remittance_data[:service_lines] || [],
-          raw_response: remittance_data
-        )
+        [
+          Lakeraven::Integrations::Edi::RemittanceResponse.new(
+            claim_id: remittance_data[:claim_id] || "UNKNOWN",
+            paid_amount_cents: remittance_data[:paid_amount_cents] || 0,
+            patient_responsibility_cents: remittance_data[:patient_responsibility_cents] || 0,
+            adjustments: remittance_data[:adjustments] || [],
+            service_lines: remittance_data[:service_lines] || [],
+            raw_response: remittance_data
+          )
+        ]
       end
 
       # -----------------------------------------------------------------

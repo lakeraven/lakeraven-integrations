@@ -30,7 +30,6 @@ Gem::Specification.new do |spec|
 
   spec.require_paths = ["lib"]
 
-  # Core gem is deliberately dependency-free at the Rails level — it contains
-  # only interface contracts and Mock implementations. Concrete adapters pull
-  # their own dependencies.
+  # Core gem is deliberately Rails-free and dependency-free. Money fields
+  # use integer cents throughout, so no BigDecimal dependency is required.
 end
