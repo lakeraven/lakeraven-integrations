@@ -19,7 +19,32 @@ module Lakeraven
   #
   # SaaS shells (corvid-saas, lakeraven-ehr-saas) are the composition layer —
   # they bundle engines + concrete adapter gems and wire the adapters into the
-  # interface slots at boot time.
+  # interface slots at boot time via Lakeraven::Integrations.configure.
   module Integrations
+    class Configuration
+      attr_accessor :edi_adapter
+
+      def initialize
+        @edi_adapter = nil
+      end
+    end
+
+    class << self
+      def configuration
+        @configuration ||= Configuration.new
+      end
+
+      def configure
+        yield(configuration)
+      end
+
+      def reset_configuration!
+        @configuration = Configuration.new
+      end
+
+      def edi_adapter
+        configuration.edi_adapter
+      end
+    end
   end
 end
