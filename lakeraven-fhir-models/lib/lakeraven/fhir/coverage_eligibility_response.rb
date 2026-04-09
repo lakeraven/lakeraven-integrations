@@ -1,76 +1,109 @@
 # frozen_string_literal: true
 
+require "delegate"
+require "active_model"
+require "fhir_models"
+
 module Lakeraven
   module Fhir
-    # FHIR R4 CoverageEligibilityResponse resource.
+    # Lakeraven decorator around FHIR::CoverageEligibilityResponse.
     #
-    # Represents the response to a coverage eligibility request, indicating
-    # whether a patient is enrolled in a particular coverage and the details
-    # of the plan. Used downstream to drive PRC "payer of last resort"
-    # determination and to populate billing workflows.
+    # Wraps a fhir_models resource and adds Lakeraven-specific PRC workflow
+    # behavior: enrolled/not_enrolled/pending/denied/exhausted/error statuses
+    # (mapped to FHIR outcomes), active_coverage? lifecycle helpers, and
+    # coverage_details / plan_info / insurer_info structured accessors for
+    # downstream PRC decision logic.
     #
     # FHIR Reference: https://hl7.org/fhir/R4/coverageeligibilityresponse.html
-    class CoverageEligibilityResponse
-      include ActiveModel::Model
-      include ActiveModel::Attributes
-
-      # Response identification
-      attribute :id, :string
-      attribute :created_at, :datetime
-
-      # Request reference
-      attribute :request_id, :string
-
-      # Patient reference
-      attribute :patient_dfn, :string
-
-      # Coverage type checked
-      attribute :coverage_type, :string
-
-      # Enrollment status
-      # Values: enrolled, not_enrolled, pending, denied, exhausted, error
-      attribute :status, :string
-
-      # Service date
-      attribute :service_date, :date
-
-      # Coverage period
-      attribute :start_date, :date
-      attribute :end_date, :date
-
-      # Plan information
-      attribute :plan_name, :string
-      attribute :policy_id, :string
-      attribute :group_id, :string
-      attribute :subscriber_id, :string
-
-      # Insurer information
-      attribute :insurer_name, :string
-      attribute :insurer_id, :string
-
-      # Response metadata
-      attribute :disposition, :string
-      attribute :response_data, :string
+    class CoverageEligibilityResponse < SimpleDelegator
+      include ActiveModel::Validations
 
       VALID_STATUSES = %w[enrolled not_enrolled pending denied exhausted error].freeze
 
-      # Validations
       validates :status, presence: true
-      validates :status, inclusion: {
-        in: VALID_STATUSES,
-        message: "is not a valid status"
-      }
+      validate :status_valid
 
-      # Initialize with defaults
-      def initialize(attributes = {})
-        attributes[:id] ||= SecureRandom.uuid
-        attributes[:created_at] ||= Time.current
-        super
+      def initialize(attributes_or_resource = {})
+        fhir = if attributes_or_resource.is_a?(::FHIR::CoverageEligibilityResponse)
+          attributes_or_resource
+        else
+          @lakeraven_attrs = attributes_or_resource
+          build_fhir(attributes_or_resource)
+        end
+        super(fhir)
       end
 
-      # =============================================================================
-      # STATUS HELPERS
-      # =============================================================================
+      # -- Lakeraven-flavored accessors --
+
+      def patient_dfn
+        ref = patient&.reference
+        return nil unless ref
+        ref.sub(/\APatient\//, "")
+      end
+
+      def request_id
+        ref = request&.reference
+        return nil unless ref
+        ref.sub(/\ACoverageEligibilityRequest\//, "")
+      end
+
+      def coverage_type
+        @lakeraven_attrs&.dig(:coverage_type)
+      end
+
+      def service_date
+        parse_date(servicedDate)
+      end
+
+      def start_date
+        parse_date(insurance&.first&.benefitPeriod&.start)
+      end
+
+      def end_date
+        parse_date(insurance&.first&.benefitPeriod&.end)
+      end
+
+      def plan_name
+        @lakeraven_attrs&.dig(:plan_name)
+      end
+
+      def policy_id
+        @lakeraven_attrs&.dig(:policy_id)
+      end
+
+      def group_id
+        @lakeraven_attrs&.dig(:group_id)
+      end
+
+      def subscriber_id
+        @lakeraven_attrs&.dig(:subscriber_id)
+      end
+
+      def insurer_name
+        insurer&.display
+      end
+
+      def insurer_id
+        @lakeraven_attrs&.dig(:insurer_id)
+      end
+
+      def disposition
+        __getobj__.disposition
+      end
+
+      def created_at
+        value = meta&.lastUpdated
+        return nil if value.nil? || value.to_s.empty?
+        Time.parse(value.to_s)
+      rescue ArgumentError
+        nil
+      end
+
+      # -- Status helpers --
+
+      def status
+        @status ||= @lakeraven_attrs&.dig(:status) || outcome_to_status
+      end
 
       def enrolled?
         status == "enrolled"
@@ -96,7 +129,7 @@ module Lakeraven
         status == "error"
       end
 
-      # Final status (no further checks needed)
+      # Final status — no further checks needed
       def final?
         %w[not_enrolled denied exhausted].include?(status)
       end
@@ -108,15 +141,12 @@ module Lakeraven
 
       def within_coverage_period?
         return true unless start_date || end_date
-        today = Date.current
-        after_start = start_date.nil? || today >= start_date
-        before_end = end_date.nil? || today <= end_date
-        after_start && before_end
+        today = Date.today
+        (start_date.nil? || today >= start_date) &&
+          (end_date.nil? || today <= end_date)
       end
 
-      # =============================================================================
-      # COVERAGE DETAILS
-      # =============================================================================
+      # -- Coverage details --
 
       def coverage_details
         return nil unless enrolled?
@@ -131,10 +161,7 @@ module Lakeraven
 
       def coverage_period
         return nil unless start_date || end_date
-        {
-          start: start_date,
-          end: end_date
-        }.compact
+        { start: start_date, end: end_date }.compact
       end
 
       def plan_info
@@ -149,92 +176,73 @@ module Lakeraven
 
       def insurer_info
         return nil unless insurer_name || insurer_id
-        {
-          name: insurer_name,
-          id: insurer_id
-        }.compact
+        { name: insurer_name, id: insurer_id }.compact
       end
 
-      # =============================================================================
-      # FHIR SERIALIZATION
-      # =============================================================================
+      # -- FHIR hash serialization --
 
       def to_fhir
-        {
-          resourceType: "CoverageEligibilityResponse",
-          id: id,
-          meta: {
-            lastUpdated: created_at&.iso8601
-          },
-          status: "active",
-          purpose: ["benefits"],
-          patient: {
-            reference: "Patient/#{patient_dfn}"
-          },
-          servicedDate: service_date&.iso8601,
-          created: created_at&.iso8601,
-          request: request_reference,
-          outcome: fhir_outcome,
-          disposition: disposition,
-          insurer: fhir_insurer,
-          insurance: fhir_insurance
-        }.compact
+        deep_symbolize(__getobj__.to_hash)
       end
 
-      def self.from_fhir(fhir_hash)
-        new(
-          id: fhir_hash[:id] || fhir_hash["id"],
-          patient_dfn: extract_patient_dfn(fhir_hash),
-          request_id: extract_request_id(fhir_hash),
-          status: outcome_to_status(
-            fhir_hash[:outcome] || fhir_hash["outcome"],
-            insurance: fhir_hash[:insurance] || fhir_hash["insurance"]
-          ),
-          service_date: parse_date(fhir_hash[:servicedDate] || fhir_hash["servicedDate"]),
-          created_at: parse_datetime(fhir_hash[:created] || fhir_hash["created"]),
-          disposition: fhir_hash[:disposition] || fhir_hash["disposition"],
-          **extract_coverage_details(fhir_hash)
-        )
+      def self.from_fhir(fhir_hash_or_resource)
+        resource = if fhir_hash_or_resource.is_a?(::FHIR::CoverageEligibilityResponse)
+          fhir_hash_or_resource
+        else
+          ::FHIR::CoverageEligibilityResponse.new(Coverage.stringify_keys(fhir_hash_or_resource))
+        end
+        instance = new(resource)
+        # Derive Lakeraven status from FHIR outcome + insurance.inforce
+        instance.send(:set_status_from_fhir)
+        instance
       end
 
       private
 
-      def request_reference
-        return nil unless request_id
-        { reference: "CoverageEligibilityRequest/#{request_id}" }
+      def build_fhir(attrs)
+        ::FHIR::CoverageEligibilityResponse.new(
+          id: attrs[:id] || SecureRandom.uuid,
+          meta: { lastUpdated: (attrs[:created_at] || Time.now).iso8601 },
+          status: "active",
+          purpose: ["benefits"],
+          patient: attrs[:patient_dfn] ? { reference: "Patient/#{attrs[:patient_dfn]}" } : { reference: "Patient/unknown" },
+          servicedDate: attrs[:service_date] ? format_date(attrs[:service_date]) : nil,
+          created: (attrs[:created_at] || Time.now).iso8601,
+          request: attrs[:request_id] ? { reference: "CoverageEligibilityRequest/#{attrs[:request_id]}" } : nil,
+          outcome: fhir_outcome_for(attrs[:status]),
+          disposition: attrs[:disposition],
+          insurer: build_insurer(attrs),
+          insurance: build_insurance(attrs)
+        )
       end
 
-      def fhir_outcome
+      def fhir_outcome_for(status)
         case status
-        when "enrolled", "exhausted" then "complete"
-        when "not_enrolled", "denied" then "complete"
+        when "enrolled", "exhausted", "not_enrolled", "denied" then "complete"
         when "pending" then "queued"
         when "error" then "error"
-        else "complete"
+        else nil
         end
       end
 
-      def fhir_insurer
+      def build_insurer(attrs)
+        name = attrs[:insurer_name] || coverage_type_display(attrs[:coverage_type])
         {
-          reference: insurer_reference,
-          display: insurer_name || coverage_type_display
+          reference: insurer_reference_for(attrs[:coverage_type], attrs[:insurer_id]),
+          display: name
         }
       end
 
-      def insurer_reference
+      def insurer_reference_for(coverage_type, insurer_id)
         case coverage_type
-        when "medicare_a", "medicare_b", "medicare_d"
-          "Organization/CMS"
-        when "medicaid"
-          "Organization/StateMedicaid"
-        when "va_benefits"
-          "Organization/VA"
-        else
-          "Organization/#{insurer_id || coverage_type&.camelize}"
+        when "medicare_a", "medicare_b", "medicare_d" then "Organization/CMS"
+        when "medicaid" then "Organization/StateMedicaid"
+        when "va_benefits" then "Organization/VA"
+        else "Organization/#{insurer_id || camelize(coverage_type.to_s)}"
         end
       end
 
-      def coverage_type_display
+      def coverage_type_display(coverage_type)
         case coverage_type
         when "medicare_a" then "Medicare Part A"
         when "medicare_b" then "Medicare Part B"
@@ -242,86 +250,89 @@ module Lakeraven
         when "medicaid" then "Medicaid"
         when "va_benefits" then "VA Benefits"
         when "private_insurance" then "Private Insurance"
-        else coverage_type&.titleize
+        else camelize(coverage_type.to_s)
         end
       end
 
-      def fhir_insurance
-        return [] unless enrolled?
+      def build_insurance(attrs)
+        return [] unless attrs[:status] == "enrolled"
         [
           {
             coverage: {
-              reference: "Coverage/#{patient_dfn}-#{coverage_type}"
+              reference: "Coverage/#{attrs[:patient_dfn]}-#{attrs[:coverage_type]}"
             },
-            inforce: within_coverage_period?,
-            benefitPeriod: benefit_period
+            inforce: within_period_for(attrs[:start_date], attrs[:end_date]),
+            benefitPeriod: build_benefit_period(attrs[:start_date], attrs[:end_date])
           }.compact
         ]
       end
 
-      def benefit_period
+      def within_period_for(start_date, end_date)
+        return true unless start_date || end_date
+        today = Date.today
+        (start_date.nil? || today >= start_date) &&
+          (end_date.nil? || today <= end_date)
+      end
+
+      def build_benefit_period(start_date, end_date)
         return nil unless start_date || end_date
-        {
-          start: start_date&.iso8601,
-          end: end_date&.iso8601
-        }.compact
+        { start: format_date(start_date), end: format_date(end_date) }.compact
       end
 
-      def self.extract_patient_dfn(fhir_hash)
-        patient_ref = fhir_hash[:patient] || fhir_hash["patient"]
-        return nil unless patient_ref
-        reference = patient_ref[:reference] || patient_ref["reference"]
-        reference&.gsub("Patient/", "")
+      def format_date(value)
+        return nil if value.nil?
+        value.is_a?(Date) ? value.iso8601 : value.to_s
       end
 
-      def self.extract_request_id(fhir_hash)
-        request_ref = fhir_hash[:request] || fhir_hash["request"]
-        return nil unless request_ref
-        reference = request_ref[:reference] || request_ref["reference"]
-        reference&.gsub("CoverageEligibilityRequest/", "")
+      def parse_date(value)
+        return nil if value.nil? || value.to_s.empty?
+        value.is_a?(Date) ? value : Date.parse(value.to_s)
+      rescue ArgumentError
+        nil
       end
 
-      def self.outcome_to_status(outcome, insurance: nil)
-        case outcome
+      def outcome_to_status
+        fhir_outcome = __getobj__.outcome
+        return nil unless fhir_outcome
+        case fhir_outcome
         when "complete"
-          has_active_coverage?(insurance) ? "enrolled" : "not_enrolled"
+          has_active_coverage? ? "enrolled" : "not_enrolled"
         when "queued" then "pending"
         when "error" then "error"
         else "not_enrolled"
         end
       end
 
-      def self.has_active_coverage?(insurance)
-        return false if insurance.nil? || insurance.empty?
+      def has_active_coverage?
+        ins = __getobj__.insurance
+        return false if ins.nil? || ins.empty?
+        ins.any? { |entry| entry.inforce == true }
+      end
 
-        insurance.any? do |ins|
-          ins[:inforce] == true || ins["inforce"] == true
+      def set_status_from_fhir
+        @status = outcome_to_status
+      end
+
+      def camelize(str)
+        str.split("_").map(&:capitalize).join
+      end
+
+      def status_valid
+        return if status.nil?
+        unless VALID_STATUSES.include?(status)
+          errors.add(:status, "is not a valid status")
         end
       end
 
-      def self.extract_coverage_details(fhir_hash)
-        insurance = (fhir_hash[:insurance] || fhir_hash["insurance"])&.first
-        return {} unless insurance
-
-        period = insurance[:benefitPeriod] || insurance["benefitPeriod"]
-        {
-          start_date: parse_date(period&.dig(:start) || period&.dig("start")),
-          end_date: parse_date(period&.dig(:end) || period&.dig("end"))
-        }
-      end
-
-      def self.parse_date(value)
-        return nil unless value
-        Date.parse(value)
-      rescue ArgumentError
-        nil
-      end
-
-      def self.parse_datetime(value)
-        return nil unless value
-        Time.parse(value)
-      rescue ArgumentError
-        nil
+      def deep_symbolize(obj)
+        case obj
+        when Hash
+          obj.each_with_object({}) { |(k, v), out| out[k.to_sym] = deep_symbolize(v) }
+        when Array
+          obj.map { |e| deep_symbolize(e) }
+        else
+          obj
+        end
       end
     end
   end

@@ -1,57 +1,28 @@
 # frozen_string_literal: true
 
+require "delegate"
+require "active_model"
+require "fhir_models"
+
 module Lakeraven
   module Fhir
-    # FHIR R4 Coverage resource.
+    # Lakeraven decorator around FHIR::Coverage.
     #
-    # Represents insurance or other coverage for a patient. Used to track
-    # alternate resources for PRC "payer of last resort" determination and
-    # to feed eligibility and claim workflows.
+    # Wraps a fhir_models FHIR::Coverage resource (the FHIR-R4-spec-correct
+    # representation) and adds Lakeraven-specific PRC workflow behavior:
+    # coverage-type classification (medicare?, medicaid?, government_payer?),
+    # coordination-of-benefits defaults ("payer of last resort" ordering),
+    # Lakeraven-level required-field validation, and convenience accessors
+    # that read Lakeraven-flavored values out of the underlying FHIR shape
+    # (patient_dfn, coverage_type string enum, plan/group/member IDs, etc.).
+    #
+    # The goal is to stay aligned with FHIR R4 for wire format while
+    # keeping PRC-specific logic co-located with the resource.
     #
     # FHIR Reference: https://hl7.org/fhir/R4/coverage.html
-    class Coverage
-      include ActiveModel::Model
-      include ActiveModel::Attributes
+    class Coverage < SimpleDelegator
+      include ActiveModel::Validations
 
-      # Identification
-      attribute :id, :string
-      attribute :created_at, :datetime
-
-      # Patient reference
-      attribute :patient_dfn, :string
-
-      # Coverage type (medicare_a, medicare_b, medicaid, private_insurance, etc.)
-      attribute :coverage_type, :string
-
-      # Status (active, cancelled, draft, entered-in-error, plus PRC workflow states)
-      attribute :status, :string, default: "active"
-
-      # Payor information
-      attribute :payor_name, :string
-      attribute :payor_id, :string
-      attribute :payor_type, :string
-
-      # Plan information
-      attribute :plan_name, :string
-      attribute :plan_id, :string
-
-      # Subscriber information
-      attribute :subscriber_id, :string
-      attribute :member_id, :string
-      attribute :group_id, :string
-      attribute :dependent_number, :string
-
-      # Coverage period
-      attribute :start_date, :date
-      attribute :end_date, :date
-
-      # Relationship to subscriber (self, spouse, child, other)
-      attribute :relationship, :string, default: "self"
-
-      # Order for coordination of benefits (1 = primary, 2 = secondary, etc.)
-      attribute :order, :integer
-
-      # FHIR statuses plus PRC workflow statuses
       FHIR_STATUSES = %w[active cancelled draft entered-in-error].freeze
       PRC_STATUSES = %w[exhausted not_enrolled denied pending].freeze
       VALID_STATUSES = (FHIR_STATUSES + PRC_STATUSES).freeze
@@ -61,33 +32,115 @@ module Lakeraven
         va_benefits workers_comp auto_insurance state_program tribal_program
       ].freeze
 
-      # Validations
+      # Map Lakeraven coverage type enum <-> FHIR v3-ActCode
+      LAKERAVEN_TO_FHIR_CODE = {
+        "medicare_a" => "MEDICARE",
+        "medicare_b" => "MEDICARE",
+        "medicare_d" => "MEDICARE",
+        "medicaid" => "MEDICAID",
+        "private_insurance" => "HIP",
+        "va_benefits" => "VET",
+        "workers_comp" => "WCBPOL",
+        "auto_insurance" => "AUTOPOL",
+        "state_program" => "PUBLICPOL",
+        "tribal_program" => "PUBLICPOL"
+      }.freeze
+
+      FHIR_TO_LAKERAVEN_CODE = {
+        "MEDICARE" => "medicare_a",
+        "MEDICAID" => "medicaid",
+        "HIP" => "private_insurance",
+        "VET" => "va_benefits",
+        "WCBPOL" => "workers_comp",
+        "AUTOPOL" => "auto_insurance",
+        "PUBLICPOL" => "private_insurance"
+      }.freeze
+
       validates :patient_dfn, presence: true
       validates :coverage_type, presence: true
-      validates :status, inclusion: { in: VALID_STATUSES }
-      validates :coverage_type, inclusion: {
-        in: VALID_COVERAGE_TYPES,
-        message: "is not a valid coverage type"
-      }
+      validate :coverage_type_valid
+      validate :status_valid
 
-      # Initialize with defaults
-      def initialize(attributes = {})
-        attributes[:id] ||= SecureRandom.uuid
-        attributes[:created_at] ||= Time.current
-        set_default_payor(attributes)
-        super
+      # Construct from Lakeraven-shaped attributes (builds a FHIR::Coverage
+      # underneath) or wrap an existing FHIR::Coverage instance.
+      def initialize(attributes_or_resource = {})
+        fhir = if attributes_or_resource.is_a?(::FHIR::Coverage)
+          attributes_or_resource
+        else
+          build_fhir(attributes_or_resource)
+        end
+        super(fhir)
       end
 
-      # =============================================================================
-      # STATUS HELPERS
-      # =============================================================================
+      # -- Lakeraven-flavored accessors --
+
+      def patient_dfn
+        ref = beneficiary&.reference
+        return nil unless ref
+        ref.sub(/\APatient\//, "")
+      end
+
+      def coverage_type
+        coding = type&.coding&.first
+        return nil unless coding
+        # Display is set to the Lakeraven enum by build_fhir. Prefer it as
+        # the source of truth so validation catches invalid inputs (otherwise
+        # the FHIR code round-trip would silently remap them).
+        coding.display || FHIR_TO_LAKERAVEN_CODE[coding.code]
+      end
+
+      def relationship
+        __getobj__.relationship&.coding&.first&.code
+      end
+
+      def created_at
+        value = meta&.lastUpdated
+        return nil if value.nil? || value.to_s.empty?
+        Time.parse(value.to_s)
+      rescue ArgumentError
+        nil
+      end
+
+      def payor_name
+        payor&.first&.display
+      end
+
+      def payor_display
+        payor_name || default_payor_name
+      end
+
+      def plan_name
+        lookup_class_value("plan", :name)
+      end
+
+      def plan_id
+        lookup_class_value("plan", :value)
+      end
+
+      def group_id
+        lookup_class_value("group", :value)
+      end
+
+      def member_id
+        lookup_class_value("rxid", :value)
+      end
+
+      def start_date
+        parse_date(period&.start)
+      end
+
+      def end_date
+        parse_date(period&.end)
+      end
+
+      # -- Status helpers --
 
       def active?
         status == "active" && within_coverage_period?
       end
 
       def expired?
-        end_date.present? && end_date < Date.current
+        end_date && end_date < Date.today
       end
 
       def cancelled?
@@ -96,18 +149,15 @@ module Lakeraven
 
       def within_coverage_period?
         return true unless start_date || end_date
-        today = Date.current
-        after_start = start_date.nil? || today >= start_date
-        before_end = end_date.nil? || today <= end_date
-        after_start && before_end
+        today = Date.today
+        (start_date.nil? || today >= start_date) &&
+          (end_date.nil? || today <= end_date)
       end
 
-      # =============================================================================
-      # PAYOR HELPERS
-      # =============================================================================
+      # -- Payor helpers --
 
       def medicare?
-        coverage_type&.start_with?("medicare")
+        coverage_type&.start_with?("medicare") || false
       end
 
       def medicaid?
@@ -126,17 +176,7 @@ module Lakeraven
         medicare? || medicaid? || va_benefits?
       end
 
-      def payor_display
-        payor_name || default_payor_name
-      end
-
-      def payor_type_display
-        payor_type || default_payor_type
-      end
-
-      # =============================================================================
-      # COORDINATION OF BENEFITS
-      # =============================================================================
+      # -- Coordination of benefits --
 
       def coordination_order
         order || default_coordination_order
@@ -150,63 +190,142 @@ module Lakeraven
         coordination_order == 2
       end
 
-      # =============================================================================
-      # FHIR SERIALIZATION
-      # =============================================================================
+      # -- Serialize to a symbol-keyed FHIR hash --
 
       def to_fhir
-        {
-          resourceType: "Coverage",
-          id: id,
-          meta: {
-            lastUpdated: created_at&.iso8601
-          },
-          status: status,
-          type: coverage_type_coding,
-          subscriber: subscriber_reference,
-          beneficiary: {
-            reference: "Patient/#{patient_dfn}"
-          },
-          dependent: dependent_number,
-          relationship: relationship_coding,
-          period: period_fhir,
-          payor: [payor_reference],
-          class: class_array,
-          order: order
-        }.compact
+        deep_symbolize(__getobj__.to_hash)
       end
 
-      def self.from_fhir(fhir_hash)
-        new(
-          id: fhir_hash[:id] || fhir_hash["id"],
-          patient_dfn: extract_patient_dfn(fhir_hash),
-          status: fhir_hash[:status] || fhir_hash["status"] || "active",
-          coverage_type: extract_coverage_type(fhir_hash),
-          payor_name: extract_payor_name(fhir_hash),
-          **extract_period(fhir_hash),
-          **extract_class_info(fhir_hash)
-        )
+      # -- Reconstruct from a FHIR hash or FHIR::Coverage --
+
+      def self.from_fhir(fhir_hash_or_resource)
+        resource = if fhir_hash_or_resource.is_a?(::FHIR::Coverage)
+          fhir_hash_or_resource
+        else
+          ::FHIR::Coverage.new(stringify_keys(fhir_hash_or_resource))
+        end
+        new(resource)
+      end
+
+      def self.stringify_keys(hash)
+        hash.each_with_object({}) do |(k, v), out|
+          out[k.to_s] = v.is_a?(Hash) ? stringify_keys(v) : v.is_a?(Array) ? v.map { |e| e.is_a?(Hash) ? stringify_keys(e) : e } : v
+        end
       end
 
       private
 
-      def set_default_payor(attributes)
-        return if attributes[:payor_name].present?
+      def build_fhir(attrs)
+        coverage_type_enum = attrs[:coverage_type]
+        ::FHIR::Coverage.new(
+          id: attrs[:id] || SecureRandom.uuid,
+          meta: { lastUpdated: (attrs[:created_at] || Time.now).iso8601 },
+          status: attrs[:status] || "active",
+          type: build_type(coverage_type_enum),
+          beneficiary: attrs[:patient_dfn] ? { reference: "Patient/#{attrs[:patient_dfn]}" } : nil,
+          subscriber: attrs[:subscriber_id] ? { reference: "Patient/#{attrs[:subscriber_id]}" } : nil,
+          dependent: attrs[:dependent_number],
+          relationship: build_relationship(attrs[:relationship] || "self"),
+          period: build_period(attrs[:start_date], attrs[:end_date]),
+          payor: [build_payor(coverage_type_enum, attrs[:payor_name], attrs[:payor_id])],
+          local_class: build_class_array(
+            group_id: attrs[:group_id],
+            plan_name: attrs[:plan_name],
+            plan_id: attrs[:plan_id],
+            member_id: attrs[:member_id]
+          ),
+          order: attrs[:order]
+        )
+      end
 
-        attributes[:payor_name] = default_payor_name_for(attributes[:coverage_type])
-        attributes[:payor_type] = default_payor_type_for(attributes[:coverage_type])
+      def build_type(coverage_type_enum)
+        return nil unless coverage_type_enum
+        {
+          coding: [
+            {
+              system: "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+              code: LAKERAVEN_TO_FHIR_CODE[coverage_type_enum] || "PUBLICPOL",
+              display: coverage_type_enum
+            }
+          ]
+        }
+      end
+
+      def build_relationship(relationship_code)
+        {
+          coding: [
+            {
+              system: "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
+              code: relationship_code
+            }
+          ]
+        }
+      end
+
+      def build_period(start_date, end_date)
+        return nil unless start_date || end_date
+        {
+          start: format_date(start_date),
+          end: format_date(end_date)
+        }.compact
+      end
+
+      def build_payor(coverage_type_enum, explicit_name, explicit_id)
+        name = explicit_name || default_payor_name_for(coverage_type_enum)
+        {
+          reference: payor_fhir_reference(coverage_type_enum, explicit_id),
+          display: name
+        }
+      end
+
+      def payor_fhir_reference(coverage_type_enum, explicit_id)
+        case coverage_type_enum
+        when "medicare_a", "medicare_b", "medicare_d" then "Organization/CMS"
+        when "medicaid" then "Organization/StateMedicaid"
+        when "va_benefits" then "Organization/VA"
+        else "Organization/#{explicit_id || camelize(coverage_type_enum.to_s)}"
+        end
+      end
+
+      def build_class_array(group_id:, plan_name:, plan_id:, member_id:)
+        classes = []
+        if group_id && !group_id.empty?
+          classes << {
+            type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/coverage-class", code: "group" }] },
+            value: group_id
+          }
+        end
+        if (plan_name && !plan_name.empty?) || (plan_id && !plan_id.empty?)
+          classes << {
+            type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/coverage-class", code: "plan" }] },
+            value: plan_id || plan_name,
+            name: plan_name
+          }
+        end
+        if member_id && !member_id.empty?
+          classes << {
+            type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/coverage-class", code: "rxid" }] },
+            value: member_id
+          }
+        end
+        classes
+      end
+
+      def lookup_class_value(target_code, field)
+        return nil unless local_class
+        entry = local_class.find do |cls|
+          cls.type&.coding&.first&.code == target_code
+        end
+        return nil unless entry
+        field == :name ? entry.name : entry.value
       end
 
       def default_payor_name
         default_payor_name_for(coverage_type)
       end
 
-      def default_payor_type
-        default_payor_type_for(coverage_type)
-      end
-
-      def default_payor_name_for(type)
-        case type
+      def default_payor_name_for(type_enum)
+        case type_enum
         when "medicare_a", "medicare_b", "medicare_d" then "Medicare"
         when "medicaid" then "Medicaid"
         when "va_benefits" then "Department of Veterans Affairs"
@@ -215,19 +334,6 @@ module Lakeraven
         when "state_program" then "State Health Program"
         when "tribal_program" then "Tribal Health Program"
         when "private_insurance" then "Private Insurance"
-        else nil
-        end
-      end
-
-      def default_payor_type_for(type)
-        case type
-        when "medicare_a" then "Medicare Part A"
-        when "medicare_b" then "Medicare Part B"
-        when "medicare_d" then "Medicare Part D"
-        when "medicaid" then "Medicaid"
-        when "va_benefits" then "VA Benefits"
-        when "private_insurance" then "Private Insurance"
-        else type&.titleize
         end
       end
 
@@ -242,164 +348,45 @@ module Lakeraven
         end
       end
 
-      def coverage_type_coding
-        {
-          coding: [
-            {
-              system: "http://terminology.hl7.org/CodeSystem/v3-ActCode",
-              code: fhir_coverage_type_code,
-              display: payor_type_display
-            }
-          ]
-        }
-      end
-
-      def fhir_coverage_type_code
-        case coverage_type
-        when "medicare_a", "medicare_b", "medicare_d" then "MEDICARE"
-        when "medicaid" then "MEDICAID"
-        when "private_insurance" then "HIP"
-        when "va_benefits" then "VET"
-        when "workers_comp" then "WCBPOL"
-        when "auto_insurance" then "AUTOPOL"
-        else "PUBLICPOL"
-        end
-      end
-
-      def subscriber_reference
-        return nil unless subscriber_id.present?
-        { reference: "Patient/#{subscriber_id}" }
-      end
-
-      def relationship_coding
-        {
-          coding: [
-            {
-              system: "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
-              code: relationship || "self"
-            }
-          ]
-        }
-      end
-
-      def period_fhir
-        return nil unless start_date || end_date
-        {
-          start: start_date&.iso8601,
-          end: end_date&.iso8601
-        }.compact
-      end
-
-      def payor_reference
-        {
-          reference: payor_fhir_reference,
-          display: payor_display
-        }
-      end
-
-      def payor_fhir_reference
-        case coverage_type
-        when "medicare_a", "medicare_b", "medicare_d" then "Organization/CMS"
-        when "medicaid" then "Organization/StateMedicaid"
-        when "va_benefits" then "Organization/VA"
-        else "Organization/#{payor_id || coverage_type&.camelize}"
-        end
-      end
-
-      def class_array
-        classes = []
-
-        if group_id.present?
-          classes << {
-            type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/coverage-class", code: "group" }] },
-            value: group_id
-          }
-        end
-
-        if plan_name.present? || plan_id.present?
-          classes << {
-            type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/coverage-class", code: "plan" }] },
-            value: plan_id || plan_name,
-            name: plan_name
-          }
-        end
-
-        if member_id.present?
-          classes << {
-            type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/coverage-class", code: "rxid" }] },
-            value: member_id
-          }
-        end
-
-        classes.presence
-      end
-
-      def self.extract_patient_dfn(fhir_hash)
-        beneficiary = fhir_hash[:beneficiary] || fhir_hash["beneficiary"]
-        return nil unless beneficiary
-        reference = beneficiary[:reference] || beneficiary["reference"]
-        reference&.gsub("Patient/", "")
-      end
-
-      def self.extract_coverage_type(fhir_hash)
-        type = fhir_hash[:type] || fhir_hash["type"]
-        return nil unless type
-        coding = type[:coding]&.first || type["coding"]&.first
-        code = coding&.dig(:code) || coding&.dig("code")
-
-        case code
-        when "MEDICARE" then "medicare_a"
-        when "MEDICAID" then "medicaid"
-        when "HIP" then "private_insurance"
-        when "VET" then "va_benefits"
-        when "WCBPOL" then "workers_comp"
-        when "AUTOPOL" then "auto_insurance"
-        else "private_insurance"
-        end
-      end
-
-      def self.extract_payor_name(fhir_hash)
-        payors = fhir_hash[:payor] || fhir_hash["payor"]
-        return nil unless payors&.any?
-        payors.first[:display] || payors.first["display"]
-      end
-
-      def self.extract_period(fhir_hash)
-        period = fhir_hash[:period] || fhir_hash["period"]
-        return {} unless period
-        {
-          start_date: parse_date(period[:start] || period["start"]),
-          end_date: parse_date(period[:end] || period["end"])
-        }
-      end
-
-      def self.extract_class_info(fhir_hash)
-        classes = fhir_hash[:class] || fhir_hash["class"]
-        return {} unless classes
-
-        result = {}
-        classes.each do |cls|
-          type_coding = cls[:type]&.dig(:coding, 0) || cls["type"]&.dig("coding", 0)
-          code = type_coding&.dig(:code) || type_coding&.dig("code")
-
-          case code
-          when "group"
-            result[:group_id] = cls[:value] || cls["value"]
-          when "plan"
-            result[:plan_name] = cls[:name] || cls["name"]
-            result[:plan_id] = cls[:value] || cls["value"]
-          when "rxid"
-            result[:member_id] = cls[:value] || cls["value"]
-          end
-        end
-        result
-      end
-
-      def self.parse_date(value)
-        return nil unless value
-        Date.parse(value)
+      def parse_date(value)
+        return nil if value.nil? || value.to_s.empty?
+        value.is_a?(Date) ? value : Date.parse(value.to_s)
       rescue ArgumentError
         nil
+      end
+
+      def format_date(value)
+        return nil if value.nil?
+        value.is_a?(Date) ? value.iso8601 : value.to_s
+      end
+
+      def camelize(str)
+        str.split("_").map(&:capitalize).join
+      end
+
+      def coverage_type_valid
+        return if coverage_type.nil?
+        unless VALID_COVERAGE_TYPES.include?(coverage_type)
+          errors.add(:coverage_type, "is not a valid coverage type")
+        end
+      end
+
+      def status_valid
+        return if status.nil?
+        unless VALID_STATUSES.include?(status)
+          errors.add(:status, "is not a valid status")
+        end
+      end
+
+      def deep_symbolize(obj)
+        case obj
+        when Hash
+          obj.each_with_object({}) { |(k, v), out| out[k.to_sym] = deep_symbolize(v) }
+        when Array
+          obj.map { |e| deep_symbolize(e) }
+        else
+          obj
+        end
       end
     end
   end
