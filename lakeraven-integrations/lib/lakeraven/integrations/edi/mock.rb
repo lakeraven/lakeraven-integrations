@@ -9,11 +9,7 @@ require_relative "base"
 module Lakeraven
   module Integrations
     module Edi
-      # Canned EDI responses for dev/test.
-      # Eligibility returns a FHIR-native CoverageEligibilityResponse
-      # decorator; claim / status / remittance remain hash-shaped until
-      # FHIR Claim / ClaimResponse / ExplanationOfBenefit decorators are
-      # added to lakeraven-fhir-models.
+      # Canned FHIR-native EDI responses for dev/test.
       class Mock < Base
         def check_eligibility(request)
           Lakeraven::Fhir::CoverageEligibilityResponse.new(
@@ -30,26 +26,21 @@ module Lakeraven
         end
 
         def submit_claim(request)
-          claim_id = request[:claim_id] || "CLM-#{SecureRandom.hex(4).upcase}"
-
-          ClaimResponse.new(
+          Lakeraven::Fhir::ClaimResponse.new(
             accepted: true,
-            claim_id: claim_id,
+            claim_id: "CLM-#{SecureRandom.hex(4).upcase}",
             tracking_number: "TRK-#{SecureRandom.hex(4).upcase}",
-            errors: [],
-            raw_response: { mock: true, transaction: "999" }
+            patient_dfn: request.patient_dfn
           )
         end
 
         def check_claim_status(claim_reference)
-          StatusResponse.new(
+          Lakeraven::Fhir::ClaimResponse.new(
+            accepted: true,
             claim_id: claim_reference,
-            status_code: "A1",
-            status_description: "Acknowledged/Receipt - The claim/encounter has been received.",
-            effective_date: Date.today,
-            total_charge_cents: 150_000, # $1500.00
-            paid_amount_cents: 120_000, # $1200.00
-            raw_response: { mock: true, transaction: "277" }
+            tracking_number: "TRK-#{SecureRandom.hex(4).upcase}",
+            patient_dfn: "mock",
+            paid_amount_cents: 120_000
           )
         end
 
@@ -61,30 +52,18 @@ module Lakeraven
           end
 
           [
-            RemittanceResponse.new(
+            Lakeraven::Fhir::ExplanationOfBenefit.new(
               claim_id: claim_id,
-              paid_amount_cents: 120_000, # $1200.00
-              patient_responsibility_cents: 30_000, # $300.00
+              patient_dfn: "mock",
+              paid_amount_cents: 120_000,
+              patient_responsibility_cents: 30_000,
               adjustments: [
-                {
-                  reason_code: "CO-45",
-                  amount_cents: 30_000, # $300.00
-                  description: "Charges exceed fee schedule"
-                }
+                { reason_code: "CO-45", amount_cents: 30_000, description: "Charges exceed fee schedule" }
               ],
               service_lines: [
-                {
-                  procedure_code: "99213",
-                  charged_cents: 15_000, # $150.00
-                  paid_cents: 12_000 # $120.00
-                },
-                {
-                  procedure_code: "99214",
-                  charged_cents: 25_000, # $250.00
-                  paid_cents: 20_000 # $200.00
-                }
-              ],
-              raw_response: { mock: true, transaction: "835" }
+                { procedure_code: "99213", charged_cents: 15_000, paid_cents: 12_000 },
+                { procedure_code: "99214", charged_cents: 25_000, paid_cents: 20_000 }
+              ]
             )
           ]
         end

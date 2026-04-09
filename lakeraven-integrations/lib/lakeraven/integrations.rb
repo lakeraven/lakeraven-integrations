@@ -4,6 +4,10 @@ require_relative "integrations/version"
 require_relative "integrations/edi/base"
 require_relative "integrations/edi/mock"
 
+# Note: the old Data-class-based response types (EligibilityResponse,
+# ClaimResponse, StatusResponse, RemittanceResponse) have been replaced
+# by FHIR-native Lakeraven::Fhir::* decorators from lakeraven-fhir-models.
+
 module Lakeraven
   # Lakeraven::Integrations is the interface-contract layer between Lakeraven
   # engines (corvid, lakeraven-ehr) and concrete backend implementations.
