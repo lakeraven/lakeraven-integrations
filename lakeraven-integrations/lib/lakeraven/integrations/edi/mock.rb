@@ -3,24 +3,29 @@
 require "date"
 require "securerandom"
 
+require "lakeraven/fhir"
 require_relative "base"
 
 module Lakeraven
   module Integrations
     module Edi
       # Canned EDI responses for dev/test.
-      # Returns successful 271/837/277/835 equivalents in integer cents.
+      # Eligibility returns a FHIR-native CoverageEligibilityResponse
+      # decorator; claim / status / remittance remain hash-shaped until
+      # FHIR Claim / ClaimResponse / ExplanationOfBenefit decorators are
+      # added to lakeraven-fhir-models.
       class Mock < Base
         def check_eligibility(request)
-          EligibilityResponse.new(
-            eligible: true,
-            payer_name: "Mock Medicaid",
-            subscriber_id: "MOCK-#{request[:subscriber_id] || '1'}",
-            group_number: nil,
-            coverage_start: Date.new(Date.today.year, 1, 1),
-            coverage_end: Date.new(Date.today.year, 12, 31),
-            service_types: [request[:service_type] || "30"],
-            raw_response: { mock: true, transaction: "271" }
+          Lakeraven::Fhir::CoverageEligibilityResponse.new(
+            patient_dfn: request.patient_dfn,
+            coverage_type: request.coverage_type,
+            status: "enrolled",
+            service_date: request.service_date || Date.today,
+            start_date: Date.new(Date.today.year, 1, 1),
+            end_date: Date.new(Date.today.year, 12, 31),
+            plan_name: "Mock Medicaid PPO",
+            policy_id: "MOCK-POL-#{request.subscriber_id || '1'}",
+            insurer_name: "Mock Medicaid"
           )
         end
 
