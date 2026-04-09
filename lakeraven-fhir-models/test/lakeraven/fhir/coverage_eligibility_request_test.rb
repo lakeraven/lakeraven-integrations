@@ -20,7 +20,7 @@ module Lakeraven
 
       def test_sets_default_service_date_to_today
         request = CoverageEligibilityRequest.new(patient_dfn: "123", coverage_type: "medicaid")
-        assert_equal Date.current, request.service_date
+        assert_equal Date.today, request.service_date
       end
 
       def test_defaults_purpose_to_benefits

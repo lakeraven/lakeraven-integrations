@@ -1,116 +1,123 @@
 # frozen_string_literal: true
 
+require "delegate"
+require "active_model"
+require "fhir_models"
+
 module Lakeraven
   module Fhir
-    # FHIR R4 CoverageEligibilityRequest resource.
+    # Lakeraven decorator around FHIR::CoverageEligibilityRequest.
     #
     # Represents a request to determine coverage eligibility for a patient.
-    # Used to query external enrollment services for alternate resource
-    # verification and to trigger payer eligibility checks (270 transactions).
+    # Wraps a fhir_models FHIR::CoverageEligibilityRequest and adds
+    # Lakeraven-specific accessors (patient_dfn, coverage_type as Lakeraven
+    # enum, provider_ien) and required-field validation.
     #
     # FHIR Reference: https://hl7.org/fhir/R4/coverageeligibilityrequest.html
-    class CoverageEligibilityRequest
-      include ActiveModel::Model
-      include ActiveModel::Attributes
+    class CoverageEligibilityRequest < SimpleDelegator
+      include ActiveModel::Validations
 
-      # Request identification
-      attribute :id, :string
-      attribute :created_at, :datetime
+      VALID_COVERAGE_TYPES = Coverage::VALID_COVERAGE_TYPES
+      LAKERAVEN_TO_FHIR_CODE = Coverage::LAKERAVEN_TO_FHIR_CODE
+      FHIR_TO_LAKERAVEN_CODE = Coverage::FHIR_TO_LAKERAVEN_CODE
 
-      # Patient reference
-      attribute :patient_dfn, :string
-
-      # Coverage type being checked
-      attribute :coverage_type, :string
-
-      # Service date for eligibility check
-      attribute :service_date, :date
-
-      # Purpose of the request
-      attribute :purpose, :string, default: "benefits"
-
-      # Requesting provider (optional)
-      attribute :provider_ien, :string
-
-      VALID_COVERAGE_TYPES = %w[
-        medicare_a medicare_b medicare_d medicaid private_insurance
-        va_benefits workers_comp auto_insurance state_program tribal_program
-      ].freeze
-
-      # Validations
       validates :patient_dfn, presence: true
       validates :coverage_type, presence: true
-      validates :service_date, presence: true
-      validates :coverage_type, inclusion: {
-        in: VALID_COVERAGE_TYPES,
-        message: "is not a valid coverage type"
-      }
+      validate :coverage_type_valid
 
-      # Initialize with defaults
-      def initialize(attributes = {})
-        attributes[:id] ||= SecureRandom.uuid
-        attributes[:created_at] ||= Time.current
-        attributes[:service_date] ||= Date.current
-        super
+      def initialize(attributes_or_resource = {})
+        fhir = if attributes_or_resource.is_a?(::FHIR::CoverageEligibilityRequest)
+          attributes_or_resource
+        else
+          build_fhir(attributes_or_resource)
+        end
+        super(fhir)
       end
 
-      # =============================================================================
-      # FHIR SERIALIZATION
-      # =============================================================================
+      # -- Lakeraven-flavored accessors --
+
+      def patient_dfn
+        ref = patient&.reference
+        return nil unless ref
+        ref.sub(/\APatient\//, "")
+      end
+
+      def coverage_type
+        items = item
+        return nil unless items&.any?
+        coding = items.first.category&.coding&.first
+        coding&.code
+      end
+
+      def service_date
+        value = servicedDate
+        return nil if value.nil? || value.to_s.empty?
+        value.is_a?(Date) ? value : Date.parse(value.to_s)
+      rescue ArgumentError
+        nil
+      end
+
+      def created_at
+        value = meta&.lastUpdated
+        return nil if value.nil? || value.to_s.empty?
+        Time.parse(value.to_s)
+      rescue ArgumentError
+        nil
+      end
+
+      def purpose
+        purposes = __getobj__.purpose
+        purposes&.first || "benefits"
+      end
+
+      def provider_ien
+        provider&.reference&.sub(/\APractitioner\//, "")
+      end
+
+      # -- FHIR hash serialization (backward compat with tests / consumers) --
 
       def to_fhir
-        {
-          resourceType: "CoverageEligibilityRequest",
-          id: id,
-          meta: {
-            lastUpdated: created_at&.iso8601
-          },
-          status: "active",
-          purpose: [purpose],
-          patient: {
-            reference: "Patient/#{patient_dfn}"
-          },
-          servicedDate: service_date&.iso8601,
-          created: created_at&.iso8601,
-          provider: provider_reference,
-          insurer: insurer_reference,
-          item: [
-            {
-              category: {
-                coding: [coverage_type_coding]
-              }
-            }
-          ]
-        }.compact
+        deep_symbolize(__getobj__.to_hash)
       end
 
-      def self.from_fhir(fhir_hash)
-        new(
-          id: fhir_hash[:id] || fhir_hash["id"],
-          patient_dfn: extract_patient_dfn(fhir_hash),
-          coverage_type: extract_coverage_type(fhir_hash),
-          service_date: parse_date(fhir_hash[:servicedDate] || fhir_hash["servicedDate"]),
-          purpose: extract_purpose(fhir_hash),
-          created_at: parse_datetime(fhir_hash[:created] || fhir_hash["created"])
-        )
+      def self.from_fhir(fhir_hash_or_resource)
+        resource = if fhir_hash_or_resource.is_a?(::FHIR::CoverageEligibilityRequest)
+          fhir_hash_or_resource
+        else
+          ::FHIR::CoverageEligibilityRequest.new(Coverage.stringify_keys(fhir_hash_or_resource))
+        end
+        new(resource)
       end
 
       private
 
-      def provider_reference
-        return nil unless provider_ien.present?
-        { reference: "Practitioner/#{provider_ien}" }
+      def build_fhir(attrs)
+        service_date = attrs[:service_date] || Date.today
+        coverage_type_enum = attrs[:coverage_type]
+        ::FHIR::CoverageEligibilityRequest.new(
+          id: attrs[:id] || SecureRandom.uuid,
+          meta: { lastUpdated: (attrs[:created_at] || Time.now).iso8601 },
+          status: "active",
+          purpose: [attrs[:purpose] || "benefits"],
+          patient: attrs[:patient_dfn] ? { reference: "Patient/#{attrs[:patient_dfn]}" } : nil,
+          servicedDate: service_date.is_a?(Date) ? service_date.iso8601 : service_date.to_s,
+          created: (attrs[:created_at] || Time.now).iso8601,
+          provider: attrs[:provider_ien] ? { reference: "Practitioner/#{attrs[:provider_ien]}" } : nil,
+          insurer: build_insurer(coverage_type_enum),
+          item: coverage_type_enum ? [build_item(coverage_type_enum)] : []
+        )
       end
 
-      def insurer_reference
+      def build_insurer(coverage_type_enum)
+        return nil unless coverage_type_enum
         {
-          reference: insurer_reference_for_type,
-          display: insurer_display_for_type
+          reference: insurer_reference_for_type(coverage_type_enum),
+          display: insurer_display_for_type(coverage_type_enum)
         }
       end
 
-      def insurer_reference_for_type
-        case coverage_type
+      def insurer_reference_for_type(coverage_type_enum)
+        case coverage_type_enum
         when "medicare_a", "medicare_b", "medicare_d"
           "Organization/CMS"
         when "medicaid"
@@ -118,12 +125,12 @@ module Lakeraven
         when "va_benefits"
           "Organization/VA"
         else
-          "Organization/#{coverage_type.camelize}"
+          "Organization/#{camelize(coverage_type_enum.to_s)}"
         end
       end
 
-      def insurer_display_for_type
-        case coverage_type
+      def insurer_display_for_type(coverage_type_enum)
+        case coverage_type_enum
         when "medicare_a" then "Medicare Part A"
         when "medicare_b" then "Medicare Part B"
         when "medicare_d" then "Medicare Part D"
@@ -134,50 +141,44 @@ module Lakeraven
         when "auto_insurance" then "Auto Insurance"
         when "state_program" then "State Health Program"
         when "tribal_program" then "Tribal Health Program"
-        else coverage_type.titleize
+        else camelize(coverage_type_enum.to_s)
         end
       end
 
-      def coverage_type_coding
+      def build_item(coverage_type_enum)
         {
-          system: "http://terminology.hl7.org/CodeSystem/coverage-class",
-          code: coverage_type,
-          display: insurer_display_for_type
+          category: {
+            coding: [
+              {
+                system: "http://terminology.hl7.org/CodeSystem/coverage-class",
+                code: coverage_type_enum,
+                display: insurer_display_for_type(coverage_type_enum)
+              }
+            ]
+          }
         }
       end
 
-      def self.extract_patient_dfn(fhir_hash)
-        patient_ref = fhir_hash[:patient] || fhir_hash["patient"]
-        return nil unless patient_ref
-        reference = patient_ref[:reference] || patient_ref["reference"]
-        reference&.gsub("Patient/", "")
+      def camelize(str)
+        str.split("_").map(&:capitalize).join
       end
 
-      def self.extract_coverage_type(fhir_hash)
-        items = fhir_hash[:item] || fhir_hash["item"]
-        return nil unless items&.any?
-        category = items.first[:category] || items.first["category"]
-        coding = category&.dig(:coding, 0) || category&.dig("coding", 0)
-        coding&.dig(:code) || coding&.dig("code")
+      def coverage_type_valid
+        return if coverage_type.nil?
+        unless VALID_COVERAGE_TYPES.include?(coverage_type)
+          errors.add(:coverage_type, "is not a valid coverage type")
+        end
       end
 
-      def self.extract_purpose(fhir_hash)
-        purposes = fhir_hash[:purpose] || fhir_hash["purpose"]
-        purposes&.first || "benefits"
-      end
-
-      def self.parse_date(value)
-        return nil unless value
-        Date.parse(value)
-      rescue ArgumentError
-        nil
-      end
-
-      def self.parse_datetime(value)
-        return nil unless value
-        Time.parse(value)
-      rescue ArgumentError
-        nil
+      def deep_symbolize(obj)
+        case obj
+        when Hash
+          obj.each_with_object({}) { |(k, v), out| out[k.to_sym] = deep_symbolize(v) }
+        when Array
+          obj.map { |e| deep_symbolize(e) }
+        else
+          obj
+        end
       end
     end
   end
