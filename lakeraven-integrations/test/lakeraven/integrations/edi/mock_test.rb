@@ -68,6 +68,88 @@ module Lakeraven
           refute_empty eob.service_lines
         end
 
+        def test_process_remittance_pays_allowed_amount_when_claim_provided
+          results = @edi.process_remittance(
+            claim_id: "CLM-EXAMPLE",
+            billed_amount_cents: 62_000,
+            allowed_amount_cents: 16_344,
+            procedure_code: "99204"
+          )
+          eob = results.first
+
+          assert_equal "CLM-EXAMPLE", eob.claim_id
+          # Pays the allowed (Medicare-Like Rate) amount, not more than billed
+          assert_equal 16_344, eob.paid_amount_cents
+          # PRC is payer of last resort -> no patient responsibility
+          assert_equal 0, eob.patient_responsibility_cents
+          # The difference is a single CO-45 contractual adjustment
+          assert_equal 1, eob.adjustments.length
+          assert_equal "CO-45", eob.adjustments.first[:reason_code]
+          assert_equal 45_656, eob.adjustments.first[:amount_cents]
+          # One service line echoing the claim
+          line = eob.service_lines.first
+          assert_equal "99204", line[:procedure_code]
+          assert_equal 62_000, line[:charged_cents]
+          assert_equal 16_344, line[:paid_cents]
+        end
+
+        # -- process_remittance: fail closed on invalid claim amounts --
+        # A claim payload (carrying procedure_code and/or amount fields) must
+        # never fall through to the canned remittance: bad money data has to
+        # fail closed, not silently emit a $1,200 payment.
+
+        def test_process_remittance_rejects_allowed_exceeding_billed
+          # A real Medicare-Like Rate is never above the billed charge.
+          error = assert_raises(ArgumentError) do
+            @edi.process_remittance(
+              claim_id: "CLM-INVERTED",
+              billed_amount_cents: 16_344,
+              allowed_amount_cents: 62_000,
+              procedure_code: "99204"
+            )
+          end
+          # Must reject rather than pay the (larger) allowed amount.
+          refute_match(/1200|120000/, error.message)
+        end
+
+        def test_process_remittance_rejects_claim_payload_missing_amounts
+          # procedure_code marks this as a claim payload; absent amounts must
+          # reject, NOT return the canned $1,200 / $300 remittance.
+          assert_raises(ArgumentError) do
+            @edi.process_remittance(claim_id: "CLM-NOAMOUNTS", procedure_code: "99204")
+          end
+          assert_raises(ArgumentError) do
+            @edi.process_remittance(
+              claim_id: "CLM-NILBILLED",
+              billed_amount_cents: nil,
+              allowed_amount_cents: 16_344,
+              procedure_code: "99204"
+            )
+          end
+        end
+
+        def test_process_remittance_rejects_non_numeric_amounts
+          assert_raises(ArgumentError) do
+            @edi.process_remittance(
+              claim_id: "CLM-NAN",
+              billed_amount_cents: "N/A",
+              allowed_amount_cents: 16_344,
+              procedure_code: "99204"
+            )
+          end
+        end
+
+        def test_process_remittance_rejects_negative_amounts
+          assert_raises(ArgumentError) do
+            @edi.process_remittance(
+              claim_id: "CLM-NEG",
+              billed_amount_cents: 62_000,
+              allowed_amount_cents: -1,
+              procedure_code: "99204"
+            )
+          end
+        end
+
         def test_process_remittance_adjustments_use_integer_cents
           results = @edi.process_remittance(claim_id: "CLM-001")
           adjustment = results.first.adjustments.first
