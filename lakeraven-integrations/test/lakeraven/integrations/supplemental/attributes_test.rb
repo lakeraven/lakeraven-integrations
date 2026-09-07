@@ -61,7 +61,9 @@ module Lakeraven
         def test_value_enumerations
           assert_equal %w[class-a class-b class-c class-d class-e],
                        Attributes::DEFINITIONS["sliding-fee-class"][:values]
-          assert_equal %w[housed homeless-shelter doubling-up unsheltered unknown],
+          # UDS Table 4 shelter categories need transitional and other.
+          assert_equal %w[housed homeless-shelter doubling-up unsheltered transitional
+                          permanent-supportive other unknown],
                        Attributes::DEFINITIONS["housing-status"][:values]
           assert_equal %w[migratory seasonal none],
                        Attributes::DEFINITIONS["agricultural-worker-status"][:values]
@@ -69,7 +71,9 @@ module Lakeraven
                        Attributes::DEFINITIONS["veteran-status"][:values]
           assert_equal %w[best-served-other-language english-proficient],
                        Attributes::DEFINITIONS["language-barrier"][:values]
-          assert_equal %w[medical dental behavioral-health vision enabling other],
+          # Mental health and substance use are distinct — UDS Table 5
+          # lines 20/21 must be distinguishable.
+          assert_equal %w[medical dental mental-health substance-use vision enabling other],
                        Attributes::DEFINITIONS["visit-service-category"][:values]
         end
 

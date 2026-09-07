@@ -48,13 +48,23 @@ module Lakeraven
 
       # Registers supplemental readers, rejecting duplicate SourceDescriptor
       # ids — source ids must be unique per deployment for provenance to be
-      # meaningful. Stores a frozen copy so the registered set can only
-      # change through another assignment inside +configure+.
+      # meaningful — and rejecting readers whose descriptor channel is not
+      # +supplemental+: a primary_fhir descriptor in this slot would stamp
+      # supplemental records with primary-feed lineage. Stores a frozen copy
+      # so the registered set can only change through another assignment
+      # inside +configure+.
       def supplemental_data_readers=(readers)
         readers = Array(readers)
         duplicate_ids = readers.map { |r| r.source_descriptor.id }.tally.select { |_, count| count > 1 }.keys
         unless duplicate_ids.empty?
           raise ArgumentError, "duplicate supplemental source ids: #{duplicate_ids.join(', ')}"
+        end
+
+        non_supplemental = readers.map(&:source_descriptor).reject(&:supplemental?)
+        unless non_supplemental.empty?
+          raise ArgumentError,
+                "supplemental_data_readers require supplemental-channel descriptors; got " +
+                non_supplemental.map { |d| "#{d.id} (#{d.channel})" }.join(", ")
         end
 
         @supplemental_data_readers = readers.dup.freeze

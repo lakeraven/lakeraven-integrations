@@ -14,8 +14,13 @@ module Lakeraven
         # shape: seeding builds the same Attributes-coded FHIR::Observation
         # (and PayerCategory-typed FHIR::Coverage) a concrete adapter must
         # emit, and reads implement the Base period contract — patient-level
-        # reads are "current as of period end" with latest-wins, visit-level
-        # reads select visits within the period.
+        # reads are "current as of period end" (period nil = as of today):
+        # latest dated value on or before the as-of date wins, an undated
+        # value beats all dated ones, future-dated values never match.
+        # Coverage reads return every currently-effective coverage per
+        # patient (latest-wins per beneficiary + payer category, so
+        # dual-eligibles carry multiple Coverages); visit-level reads select
+        # visits within the period.
         #
         # Reads return copies of the stored resources, so callers mutating a
         # returned resource cannot corrupt the store.
@@ -63,20 +68,27 @@ module Lakeraven
           # Seed a payer-category coverage record.
           # @param patient_id [String]
           # @param payer_category [String] one of PayerCategory::ALL
-          # @param effective [Date, nil] effective date (nil = undated, currently effective)
+          # @param effective [Date, nil] coverage start (nil = undated, currently effective)
+          # @param ends [Date, nil] coverage end/termination date (nil = open-ended)
+          # @param status [String] FHIR Coverage.status; only "active"
+          #   coverages are returned by reads
           # @return [FHIR::Coverage] the normalized coverage
-          def seed_patient_coverage(patient_id, payer_category, effective: nil)
+          def seed_patient_coverage(patient_id, payer_category, effective: nil, ends: nil, status: "active")
             unless PayerCategory::ALL.include?(payer_category)
               raise ArgumentError,
                     "payer_category must be one of: #{PayerCategory::ALL.join(', ')} (got #{payer_category.inspect})"
             end
 
+            period = { start: effective&.to_s, end: ends&.to_s }.compact
             coverage = FHIR::Coverage.new(
               id: SecureRandom.uuid,
-              status: "active",
+              status: status,
               type: { coding: [{ system: PayerCategory::CODE_SYSTEM, code: payer_category }] },
               beneficiary: { reference: "Patient/#{patient_id}" },
-              period: effective ? { start: effective.to_s } : nil
+              # R4 requires payor (1..*); the mock stamps a synthetic
+              # display-only organization reference.
+              payor: [{ display: "Example Payer Organization (#{payer_category})" }],
+              period: period.empty? ? nil : period
             )
             (@coverages[patient_id.to_s] ||= []) << coverage
             coverage
@@ -86,7 +98,7 @@ module Lakeraven
             attributes = validate_attribute_filter!(attributes, Attributes::PATIENT_LEVEL)
             observations = gather(@patient_observations, patient_ids)
             observations = observations.select { |o| attributes.include?(attribute_code(o)) }
-            emit(latest_per(observations, period) { |o| [o.subject.reference, attribute_code(o)] })
+            emit(latest_per(observations, as_of(period)) { |o| [o.subject.reference, attribute_code(o)] })
           end
 
           def visit_attributes(patient_ids, period: nil, attributes: nil)
@@ -97,9 +109,17 @@ module Lakeraven
             emit(observations)
           end
 
+          # All currently-effective coverages per patient — dual-eligibles
+          # carry Medicare AND Medicaid Coverages simultaneously, so there is
+          # no collapse to one coverage per beneficiary: temporal latest-wins
+          # applies per (beneficiary, payer category). "Currently effective"
+          # at the as-of date means status "active" and start <= as-of <= end
+          # (nil end = open-ended, nil start = registration-current).
           def patient_coverages(patient_ids, period: nil)
+            date = as_of(period)
             coverages = gather(@coverages, patient_ids)
-            emit(latest_per(coverages, period) { |c| c.beneficiary.reference })
+            coverages = coverages.select { |c| c.status == "active" && !terminated_by?(c, date) }
+            emit(latest_per(coverages, date) { |c| [c.beneficiary.reference, payer_code(c)] })
           end
 
           private
@@ -118,7 +138,9 @@ module Lakeraven
             definition = Attributes::DEFINITIONS.fetch(attribute)
             case definition[:value]
             when :percent
-              raise ArgumentError, "#{attribute} value must be Numeric (got #{value.inspect})" unless value.is_a?(Numeric)
+              unless value.is_a?(Numeric) && value.finite?
+                raise ArgumentError, "#{attribute} value must be finite Numeric (got #{value.inspect})"
+              end
             when :coded
               unless definition[:values].include?(value)
                 raise ArgumentError,
@@ -169,17 +191,40 @@ module Lakeraven
             Array(patient_ids).flat_map { |id| store[id.to_s] || [] }
           end
 
-          # Patient-level period contract: current as of period end (inclusive),
-          # latest-wins — at most one resource per group key. Undated resources
-          # are currently effective: they always match, but a dated candidate
-          # wins over an undated one.
-          def latest_per(resources, period, &group_key)
-            candidates = resources
-            candidates = candidates.select { |r| effective_date(r).nil? || effective_date(r) <= period.end } if period
-            candidates
+          # Patient-level temporal contract, "current as of the as-of date":
+          # values dated after the as-of date never match; among the rest the
+          # latest dated value wins, except that an UNDATED value beats all
+          # dated ones — undated is the registration-current value. At most
+          # one resource per group key; seed order breaks ties.
+          def latest_per(resources, as_of_date, &group_key)
+            resources
+              .select { |r| (date = effective_date(r)).nil? || date <= as_of_date }
               .group_by(&group_key)
               .values
-              .map { |group| group.max_by.with_index { |r, i| [effective_date(r) || EARLIEST, i] } }
+              .map { |group| group.max_by.with_index { |r, i| rank(r, i) } }
+          end
+
+          def rank(resource, index)
+            date = effective_date(resource)
+            [date.nil? ? 1 : 0, date || EARLIEST, index]
+          end
+
+          # Base contract: period is "current as of period end"; period nil
+          # is "current now" — as of today.
+          def as_of(period)
+            period ? period.end : Date.today
+          end
+
+          def payer_code(coverage)
+            coverage.type.coding.first.code
+          end
+
+          # A coverage whose period end predates the as-of date is
+          # terminated; end is inclusive (start <= as-of <= end is current)
+          # and nil end is open-ended.
+          def terminated_by?(coverage, as_of_date)
+            end_date = parse_date(coverage.period&.end)
+            !end_date.nil? && end_date < as_of_date
           end
 
           EARLIEST = Date.new(0)
@@ -202,12 +247,15 @@ module Lakeraven
             parse_date(value)
           end
 
+          # Fail closed on unparseable dates: silently treating a bad date as
+          # undated would promote it to "always current" under the
+          # undated-beats-dated rule.
           def parse_date(value)
             return nil if value.nil? || value.to_s.empty?
 
             Date.parse(value.to_s)
           rescue ArgumentError
-            nil
+            raise ArgumentError, "unparseable effective date: #{value.inspect}"
           end
 
           # Return copies so callers mutating a returned resource cannot

@@ -116,7 +116,7 @@ module Lakeraven
 
         def test_seed_rejects_mistyped_percent_value
           error = assert_raises(ArgumentError) { @mock.seed_patient_attribute("1", "income-percent-fpl", "138") }
-          assert_match(/must be Numeric/, error.message)
+          assert_match(/must be finite Numeric/, error.message)
         end
 
         # -- Reads --
@@ -241,6 +241,48 @@ module Lakeraven
           assert_equal ["seasonal"], results.map { |o| o.valueCodeableConcept.coding.first.code }
         end
 
+        def test_undated_value_beats_all_dated_values
+          # Undated = the registration-current value; it wins over any dated
+          # history regardless of seed order.
+          @mock.seed_patient_attribute("1", "housing-status", "homeless-shelter", effective: Date.new(2020, 5, 1))
+          @mock.seed_patient_attribute("1", "housing-status", "housed")
+          @mock.seed_patient_attribute("1", "housing-status", "doubling-up", effective: Date.new(2026, 3, 1))
+
+          results = @mock.patient_attributes(["1"], period: Date.new(2026, 1, 1)..Date.new(2026, 12, 31))
+
+          assert_equal ["housed"], results.map { |o| o.valueCodeableConcept.coding.first.code }
+        end
+
+        def test_nil_period_excludes_future_dated_values
+          # period: nil = "current now": nothing dated later than today
+          # supersedes — or even matches. Dates are relative to today so the
+          # test never crosses the boundary.
+          @mock.seed_patient_attribute("1", "sliding-fee-class", "class-a", effective: Date.today - 30)
+          @mock.seed_patient_attribute("1", "sliding-fee-class", "class-b", effective: Date.today + 30)
+          @mock.seed_patient_attribute("2", "sliding-fee-class", "class-c", effective: Date.today + 30)
+
+          results = @mock.patient_attributes(%w[1 2])
+
+          # The future value neither supersedes patient 1's current value nor
+          # appears at all for patient 2.
+          assert_equal [["Patient/1", "class-a"]],
+                       results.map { |o| [o.subject.reference, o.valueCodeableConcept.coding.first.code] }
+        end
+
+        def test_unparseable_effective_date_fails_closed
+          observation = @mock.seed_patient_attribute("1", "veteran-status", "veteran")
+          observation.effectiveDateTime = "2026-02-30"
+
+          error = assert_raises(ArgumentError) { @mock.patient_attributes(["1"]) }
+          assert_match(/2026-02-30/, error.message)
+        end
+
+        def test_seed_rejects_non_finite_percent_value
+          assert_raises(ArgumentError) { @mock.seed_patient_attribute("1", "income-percent-fpl", Float::NAN) }
+          assert_raises(ArgumentError) { @mock.seed_patient_attribute("1", "income-percent-fpl", Float::INFINITY) }
+          assert_raises(ArgumentError) { @mock.seed_patient_attribute("1", "income-percent-fpl", -Float::INFINITY) }
+        end
+
         def test_visit_attributes_select_visits_within_period_inclusive
           @mock.seed_visit_attribute("1", "enc-1", "visit-service-category", "medical",
                                      effective: Date.new(2025, 12, 31))
@@ -268,6 +310,11 @@ module Lakeraven
           assert_equal PayerCategory::CODE_SYSTEM, coding.system
           assert_equal "medicaid", coding.code
           assert_equal "Patient/1", coverage.beneficiary.reference
+          assert_equal "active", coverage.status
+          # R4 requires Coverage.payor (1..*); the mock stamps a synthetic
+          # display-only organization reference.
+          refute_empty coverage.payor
+          refute_nil coverage.payor.first.display
           assert_equal "urn:lakeraven:source:site-a", coverage.meta.source
         end
 
@@ -275,14 +322,59 @@ module Lakeraven
           assert_raises(ArgumentError) { @mock.seed_patient_coverage("1", "gold-plan") }
         end
 
-        def test_coverage_latest_wins_as_of_period_end
-          @mock.seed_patient_coverage("1", "uninsured", effective: Date.new(2025, 1, 1))
+        def test_coverage_latest_wins_per_payer_category_as_of_period_end
+          # Superseded medicaid record loses to the newer one; future-dated
+          # medicare does not match — but temporal selection is per
+          # (beneficiary, payer category), never a collapse to one coverage
+          # per patient.
+          @mock.seed_patient_coverage("1", "medicaid", effective: Date.new(2025, 1, 1))
           @mock.seed_patient_coverage("1", "medicaid", effective: Date.new(2026, 6, 1))
           @mock.seed_patient_coverage("1", "medicare", effective: Date.new(2027, 1, 1))
 
           results = @mock.patient_coverages(["1"], period: Date.new(2026, 1, 1)..Date.new(2026, 12, 31))
 
           assert_equal ["medicaid"], results.map { |c| c.type.coding.first.code }
+          assert_equal ["2026-06-01"], results.map { |c| c.period.start }
+        end
+
+        def test_dual_eligible_returns_medicare_and_medicaid_simultaneously
+          # UDS Table 4 line 9a: dual-eligibles carry BOTH coverages.
+          @mock.seed_patient_coverage("1", "medicare", effective: Date.new(2025, 3, 1))
+          @mock.seed_patient_coverage("1", "medicaid", effective: Date.new(2026, 2, 1))
+
+          results = @mock.patient_coverages(["1"], period: Date.new(2026, 1, 1)..Date.new(2026, 12, 31))
+
+          assert_equal %w[medicaid medicare], results.map { |c| c.type.coding.first.code }.sort
+        end
+
+        def test_expired_coverage_is_excluded
+          # Coverage with an end before the as-of date (period end) is
+          # terminated: current means start <= as-of <= end.
+          @mock.seed_patient_coverage("1", "private", effective: Date.new(2026, 1, 1), ends: Date.new(2026, 6, 30))
+
+          assert_equal [], @mock.patient_coverages(["1"], period: Date.new(2026, 1, 1)..Date.new(2026, 12, 31))
+        end
+
+        def test_coverage_end_is_inclusive
+          @mock.seed_patient_coverage("1", "private", effective: Date.new(2026, 1, 1), ends: Date.new(2026, 12, 31))
+
+          results = @mock.patient_coverages(["1"], period: Date.new(2026, 1, 1)..Date.new(2026, 12, 31))
+
+          assert_equal ["private"], results.map { |c| c.type.coding.first.code }
+        end
+
+        def test_open_ended_coverage_is_included
+          @mock.seed_patient_coverage("1", "medicaid", effective: Date.new(2020, 1, 1))
+
+          results = @mock.patient_coverages(["1"], period: Date.new(2026, 1, 1)..Date.new(2026, 12, 31))
+
+          assert_equal ["medicaid"], results.map { |c| c.type.coding.first.code }
+        end
+
+        def test_non_active_coverage_is_excluded
+          @mock.seed_patient_coverage("1", "private", effective: Date.new(2026, 1, 1), status: "cancelled")
+
+          assert_equal [], @mock.patient_coverages(["1"], period: Date.new(2026, 1, 1)..Date.new(2026, 12, 31))
         end
 
         def test_coverage_returns_copies
@@ -332,6 +424,20 @@ module Lakeraven
 
           assert_equal [site_a, site_b], Lakeraven::Integrations.supplemental_data_readers
           assert Lakeraven::Integrations.supplemental_data_readers.all? { |r| r.source_descriptor.supplemental? }
+        end
+
+        def test_rejects_primary_fhir_descriptor_in_supplemental_slot
+          # A primary_fhir reader registered here would stamp supplemental
+          # records with primary-feed lineage.
+          primary = DataReader::Mock.new(
+            source_descriptor: SourceDescriptor.new(id: "site-a", ehr_platform: "rpms", channel: "primary_fhir")
+          )
+
+          error = assert_raises(ArgumentError) do
+            Lakeraven::Integrations.configure { |c| c.supplemental_data_readers = [primary] }
+          end
+          assert_match(/supplemental-channel/, error.message)
+          assert_match(/site-a \(primary_fhir\)/, error.message)
         end
 
         def test_rejects_duplicate_source_ids_at_registration

@@ -36,13 +36,16 @@ module Lakeraven
         #
         # +period:+ is a Range<Date> with an *inclusive* end. For
         # patient-level, registration-derived data (patient attributes and
-        # coverages) it means "current as of period end": implementations
-        # return the latest value effective on or before the period's end
-        # date — at most one value per attribute per patient per read.
-        # Undated values are currently-effective and always match. For
-        # visit-level attributes the period selects visits occurring within
-        # the period (inclusive of both endpoints). +period: nil+ returns
-        # everything current (patient-level) / all visits (visit-level).
+        # coverages) it means "current as of period end": the latest dated
+        # value effective on or before the period's end date wins, and an
+        # UNDATED value beats all dated ones — undated is the
+        # registration-current value. Values dated after the as-of date
+        # never match. At most one value per attribute per patient per read;
+        # coverages are latest-wins per (patient, payer category) instead —
+        # see #patient_coverages. +period: nil+ means "current now" (as of
+        # today; future-dated values are excluded). For visit-level
+        # attributes the period selects visits occurring within the period
+        # (inclusive of both endpoints); +period: nil+ returns all visits.
         #
         # == Batching and failure
         #
@@ -88,6 +91,15 @@ module Lakeraven
           # PayerCategory::CODE_SYSTEM (medicaid, medicare, private,
           # uninsured, other-public) and +beneficiary+ referencing the
           # patient.
+          #
+          # Returns ALL currently-effective coverages per patient — never a
+          # collapse to one per beneficiary: dual-eligibles carry Medicare
+          # AND Medicaid Coverages simultaneously (UDS Table 4 line 9a).
+          # Temporal latest-wins applies per (beneficiary, payer category).
+          # "Currently effective" at the as-of date (period end, or today
+          # when +period+ is nil) means status active and period.start <=
+          # as-of <= period.end, with nil start = registration-current and
+          # nil end = open-ended.
           # @param patient_ids [String, Array<String>] patient ID(s) (cohort or single)
           # @param period [Range<Date>, nil] current as of period end (inclusive); nil = current
           # @return [Array<FHIR::Coverage>] provenance-tagged coverage resources

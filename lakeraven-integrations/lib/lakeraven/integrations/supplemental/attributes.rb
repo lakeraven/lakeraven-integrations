@@ -49,10 +49,11 @@ module Lakeraven
             level: :patient, value: :coded,
             values: %w[class-a class-b class-c class-d class-e].freeze
           },
-          # Housing status / homelessness.
+          # Housing status / homelessness (UDS Table 4 shelter categories).
           "housing-status" => {
             level: :patient, value: :coded,
-            values: %w[housed homeless-shelter doubling-up unsheltered unknown].freeze
+            values: %w[housed homeless-shelter doubling-up unsheltered transitional
+                       permanent-supportive other unknown].freeze
           },
           # Migratory / seasonal agricultural worker status.
           "agricultural-worker-status" => {
@@ -69,10 +70,12 @@ module Lakeraven
             level: :patient, value: :coded,
             values: %w[best-served-other-language english-proficient].freeze
           },
-          # UDS service-category classification of a visit.
+          # UDS service-category classification of a visit. Mental health and
+          # substance use are distinct codes (not one behavioral-health
+          # bucket) — UDS Table 5 reports them on separate lines.
           "visit-service-category" => {
             level: :visit, value: :coded,
-            values: %w[medical dental behavioral-health vision enabling other].freeze
+            values: %w[medical dental mental-health substance-use vision enabling other].freeze
           }
         }.freeze
 

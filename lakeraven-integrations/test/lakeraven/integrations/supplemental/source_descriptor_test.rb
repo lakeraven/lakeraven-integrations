@@ -76,6 +76,27 @@ module Lakeraven
         def test_frozen
           assert SourceDescriptor.new(id: "s", ehr_platform: "ecw", channel: "supplemental").frozen?
         end
+
+        def test_string_attributes_are_deep_frozen
+          descriptor = SourceDescriptor.new(id: "site-a", ehr_platform: "rpms", channel: "supplemental")
+
+          assert_raises(FrozenError) { descriptor.id << "-mutated" }
+          assert_raises(FrozenError) { descriptor.ehr_platform << "-mutated" }
+          assert_raises(FrozenError) { descriptor.channel << "-mutated" }
+        end
+
+        def test_mutating_constructor_arguments_does_not_alter_descriptor
+          id = +"site-a"
+          platform = +"rpms"
+          descriptor = SourceDescriptor.new(id: id, ehr_platform: platform, channel: "supplemental")
+
+          id << "-mutated"
+          platform << "-mutated"
+
+          assert_equal "site-a", descriptor.id
+          assert_equal "rpms", descriptor.ehr_platform
+          assert_equal "urn:lakeraven:source:site-a", descriptor.uri
+        end
       end
     end
   end

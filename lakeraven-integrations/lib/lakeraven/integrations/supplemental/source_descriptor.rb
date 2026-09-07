@@ -38,9 +38,12 @@ module Lakeraven
             raise ArgumentError, "channel must be one of: #{CHANNELS.join(', ')} (got #{channel.inspect})"
           end
 
-          @id = id.to_s
-          @ehr_platform = ehr_platform
-          @channel = channel
+          # Deep-freeze: dup + freeze each string so callers holding the
+          # original argument cannot mutate a descriptor's identity out from
+          # under duplicate detection or meta.source stamping.
+          @id = id.to_s.dup.freeze
+          @ehr_platform = ehr_platform.dup.freeze
+          @channel = channel.dup.freeze
           freeze
         end
 
