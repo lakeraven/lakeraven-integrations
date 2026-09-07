@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gem-test:
+    name: test (${{ matrix.gem }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gem: [lakeraven-integrations, lakeraven-fhir-models, lakeraven-directx12]
+    defaults:
+      run:
+        working-directory: ${{ matrix.gem }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+          working-directory: ${{ matrix.gem }}
+      - run: bundle exec rake test
+
+  # Summary job carrying the exact context name the branch protection requires.
+  test:
+    name: test
+    needs: gem-test
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "all gem suites green"
