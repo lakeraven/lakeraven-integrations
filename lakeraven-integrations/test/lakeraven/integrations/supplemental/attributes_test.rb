@@ -7,7 +7,7 @@ module Lakeraven
     module Supplemental
       class AttributesTest < Minitest::Test
         def test_code_system_uri
-          assert_equal "urn:lakeraven:codesystem:uds-supplemental", Attributes::CODE_SYSTEM
+          assert_equal "https://terminology.lakeraven.com/CodeSystem/uds-supplemental-attribute", Attributes::CODE_SYSTEM
         end
 
         def test_attribute_vocabulary

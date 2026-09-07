@@ -22,7 +22,7 @@ module Lakeraven
       module Attributes
         # Internal code system URI for Observation.code on normalized
         # supplemental attributes.
-        CODE_SYSTEM = "urn:lakeraven:codesystem:uds-supplemental"
+        CODE_SYSTEM = "https://terminology.lakeraven.com/CodeSystem/uds-supplemental-attribute"
 
         # Attribute definitions: code => level (:patient or :visit) and value
         # kind (:percent, :boolean, :string).
