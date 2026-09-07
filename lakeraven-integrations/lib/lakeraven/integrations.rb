@@ -8,6 +8,7 @@ require_relative "integrations/clinical/patient_lookup/mock"
 require_relative "integrations/clinical/clinical_data_reader/base"
 require_relative "integrations/clinical/clinical_data_reader/mock"
 require_relative "integrations/supplemental/attributes"
+require_relative "integrations/supplemental/payer_category"
 require_relative "integrations/supplemental/source_descriptor"
 require_relative "integrations/supplemental/data_reader/base"
 require_relative "integrations/supplemental/data_reader/mock"
@@ -36,13 +37,27 @@ module Lakeraven
       # singular adapter slots) because a deployment can read supplemental
       # data from several EHR platforms at once; each reader carries its own
       # SourceDescriptor.
-      attr_accessor :supplemental_data_readers
+      attr_reader :supplemental_data_readers
 
       def initialize
         @edi_adapter = nil
         @patient_lookup_adapter = nil
         @clinical_data_adapter = nil
-        @supplemental_data_readers = []
+        @supplemental_data_readers = [].freeze
+      end
+
+      # Registers supplemental readers, rejecting duplicate SourceDescriptor
+      # ids — source ids must be unique per deployment for provenance to be
+      # meaningful. Stores a frozen copy so the registered set can only
+      # change through another assignment inside +configure+.
+      def supplemental_data_readers=(readers)
+        readers = Array(readers)
+        duplicate_ids = readers.map { |r| r.source_descriptor.id }.tally.select { |_, count| count > 1 }.keys
+        unless duplicate_ids.empty?
+          raise ArgumentError, "duplicate supplemental source ids: #{duplicate_ids.join(', ')}"
+        end
+
+        @supplemental_data_readers = readers.dup.freeze
       end
     end
 
@@ -71,8 +86,11 @@ module Lakeraven
         configuration.clinical_data_adapter
       end
 
+      # @return [Array<Supplemental::DataReader::Base>] the registered
+      #   readers, as a frozen copy — global config cannot be mutated
+      #   outside +configure+.
       def supplemental_data_readers
-        configuration.supplemental_data_readers
+        configuration.supplemental_data_readers.dup.freeze
       end
     end
   end

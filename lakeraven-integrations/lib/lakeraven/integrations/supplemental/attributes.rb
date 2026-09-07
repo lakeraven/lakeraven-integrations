@@ -17,37 +17,63 @@ module Lakeraven
       # Normalized shape: one FHIR::Observation per attribute value —
       # +code.coding+ = [{system: CODE_SYSTEM, code: <attribute>}], +subject+ =
       # the patient; visit-level attributes also carry an +encounter+
-      # reference. Value element by value kind: :percent -> valueQuantity
-      # (unit "%"), :boolean -> valueBoolean, :string -> valueString.
+      # reference. Value element by value kind:
+      #
+      # - :percent -> valueQuantity with UCUM percent unit
+      #   ({value:, unit: "%", system: "http://unitsofmeasure.org", code: "%"}).
+      #   Whole-percent semantics: 138 means 138% of the federal poverty level.
+      # - :coded -> valueCodeableConcept with a single coding from
+      #   VALUE_SYSTEM, code drawn from the attribute's +values:+ enumeration.
+      #
+      # Payer category is deliberately NOT in this vocabulary — it rides as
+      # FHIR::Coverage resources (see PayerCategory and
+      # DataReader::Base#patient_coverages), not as an Observation.
       module Attributes
         # Internal code system URI for Observation.code on normalized
         # supplemental attributes.
         CODE_SYSTEM = "https://terminology.lakeraven.com/CodeSystem/uds-supplemental-attribute"
 
-        # Attribute definitions: code => level (:patient or :visit) and value
-        # kind (:percent, :boolean, :string).
+        # Internal code system URI for valueCodeableConcept codings on coded
+        # attribute values.
+        VALUE_SYSTEM = "https://terminology.lakeraven.com/CodeSystem/uds-supplemental-value"
+
+        # Attribute definitions: code => level (:patient or :visit), value
+        # kind (:percent or :coded), and — for :coded — the closed +values:+
+        # enumeration (codes from VALUE_SYSTEM).
         DEFINITIONS = {
-          # Household income as a percent of the federal poverty level
-          # (basis for UDS income brackets).
-          "income_percent_fpl" => { level: :patient, value: :percent },
+          # Household income as a whole percent of the federal poverty level
+          # (basis for UDS income brackets); 138 = 138% FPL.
+          "income-percent-fpl" => { level: :patient, value: :percent },
           # Sliding-fee discount class assigned from income/household size.
-          "sliding_fee_class" => { level: :patient, value: :string },
-          # UDS payer category (e.g. medicaid, medicare, private, none) from
-          # eligibility/billing internals, distinct from raw coverage records.
-          "payer_category" => { level: :patient, value: :string },
-          # Housing status / homelessness (e.g. homeless_shelter, doubling_up,
-          # street, transitional, permanent_supportive, housed).
-          "housing_status" => { level: :patient, value: :string },
-          # Migratory / seasonal agricultural worker status
-          # (e.g. migratory, seasonal, none).
-          "agricultural_worker_status" => { level: :patient, value: :string },
+          "sliding-fee-class" => {
+            level: :patient, value: :coded,
+            values: %w[class-a class-b class-c class-d class-e].freeze
+          },
+          # Housing status / homelessness.
+          "housing-status" => {
+            level: :patient, value: :coded,
+            values: %w[housed homeless-shelter doubling-up unsheltered unknown].freeze
+          },
+          # Migratory / seasonal agricultural worker status.
+          "agricultural-worker-status" => {
+            level: :patient, value: :coded,
+            values: %w[migratory seasonal none].freeze
+          },
           # Veteran status.
-          "veteran_status" => { level: :patient, value: :boolean },
+          "veteran-status" => {
+            level: :patient, value: :coded,
+            values: %w[veteran non-veteran].freeze
+          },
           # Patient best served in a language other than English.
-          "language_barrier" => { level: :patient, value: :boolean },
-          # UDS service-category classification of a visit (e.g. medical,
-          # dental, mental_health, substance_use, vision, enabling).
-          "visit_service_category" => { level: :visit, value: :string }
+          "language-barrier" => {
+            level: :patient, value: :coded,
+            values: %w[best-served-other-language english-proficient].freeze
+          },
+          # UDS service-category classification of a visit.
+          "visit-service-category" => {
+            level: :visit, value: :coded,
+            values: %w[medical dental behavioral-health vision enabling other].freeze
+          }
         }.freeze
 
         ALL = DEFINITIONS.keys.freeze
