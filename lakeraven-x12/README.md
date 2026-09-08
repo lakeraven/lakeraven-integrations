@@ -1,15 +1,15 @@
-# lakeraven-directx12
+# lakeraven-x12
 
 Raw X12 EDI adapter for Lakeraven integrations. Implements `Lakeraven::Integrations::Edi::Base` by generating X12 envelopes and submitting them via configurable transport (HTTPS, SFTP, AS2).
 
-This is the **public vendor-lock hedge**: any Lakeraven customer can self-host the entire public stack (corvid + lakeraven-integrations + lakeraven-directx12) and bring their own clearinghouse trading-partner contract. No dependency on any commercial clearinghouse vendor or private adapter gem.
+This is the **public vendor-lock hedge**: any Lakeraven customer can self-host the entire public stack (corvid + lakeraven-integrations + lakeraven-x12) and bring their own clearinghouse trading-partner contract. No dependency on any commercial clearinghouse vendor or private adapter gem.
 
 ## Usage
 
 ```ruby
-require "lakeraven/directx12"
+require "lakeraven/x12"
 
-adapter = Lakeraven::DirectX12::Adapter.new(
+adapter = Lakeraven::X12::Adapter.new(
   endpoint: "https://clearinghouse.example.com/edi",
   sender_id: "LAKERAVEN",
   receiver_id: "PAYER01",

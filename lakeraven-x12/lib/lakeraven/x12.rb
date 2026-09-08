@@ -2,10 +2,10 @@
 
 require "lakeraven/integrations/edi/base"
 
-require_relative "directx12/version"
-require_relative "directx12/adapter"
+require_relative "x12/version"
+require_relative "x12/adapter"
 
 module Lakeraven
-  module DirectX12
+  module X12
   end
 end

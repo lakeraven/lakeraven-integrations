@@ -19,7 +19,7 @@ module Lakeraven
   # Each class is an ActiveModel value object representing a FHIR R4 resource,
   # with typed attributes, validations, and to_fhir / from_fhir round-trip
   # serialization. Used by Lakeraven engines (corvid, lakeraven-ehr) and by
-  # integration adapters (lakeraven-directx12, other clearinghouse adapters, future gems)
+  # integration adapters (lakeraven-x12, other clearinghouse adapters, future gems)
   # as the canonical shared vocabulary for healthcare data.
   module Fhir
   end

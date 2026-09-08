@@ -7,9 +7,10 @@ Public Rails-style monorepo containing Lakeraven's integration interfaces and pu
 Each subdirectory is an independent gem published from this monorepo:
 
 - **`lakeraven-integrations/`** — core gem. Adapter interface contracts (Billing, Eligibility, EDI, Denial, Coding, Dictation, Imaging, etc.) plus Mock implementations for dev/test. The stable contract that engines (`corvid`, `lakeraven-ehr`) depend on.
+- **`lakeraven-fhir-edi/`** — FHIR R4 decorators carrying EDI/PRC transaction semantics (`Lakeraven::Fhir::*`), the shared vocabulary on the EDI interfaces.
 - **`lakeraven-rpms/`** — public concrete adapter wrapping RPMS admin packages (TPB, eligibility, patient registration, insurer file, etc.) via [`rpms-rpc`](https://github.com/lakeraven/rpms-rpc). (planned — not yet extracted)
 - **`lakeraven-fhir/`** — public concrete adapter for generic FHIR R4 endpoints. (planned — not yet extracted)
-- **`lakeraven-directx12/`** — public concrete adapter for raw X12 over SFTP/AS2/HTTPS (the vendor-lock hedge).
+- **`lakeraven-x12/`** — public concrete adapter for raw X12 over SFTP/AS2/HTTPS (the vendor-lock hedge).
 
 ## Design principles
 
@@ -23,7 +24,8 @@ Each subdirectory is an independent gem published from this monorepo:
 ```
 bundle install
 cd lakeraven-integrations && bundle exec rake test
-cd lakeraven-directx12 && bundle exec rake test
+cd lakeraven-fhir-edi && bundle exec rake test
+cd lakeraven-x12 && bundle exec rake test
 ```
 
 ## License

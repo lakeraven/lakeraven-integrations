@@ -159,7 +159,7 @@ module Lakeraven
 
       # -- Adapter-needed supplemental fields (payer, subscriber, provider) --
       # These are Lakeraven extensions beyond the strict FHIR R4 CER shape,
-      # required by adapters like DirectX12 and commercial clearinghouses to build 270 payloads.
+      # required by adapters like lakeraven-x12 and commercial clearinghouses to build 270 payloads.
 
       def test_stores_payer_id
         request = CoverageEligibilityRequest.new(

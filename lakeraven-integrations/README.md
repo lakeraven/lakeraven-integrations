@@ -2,7 +2,7 @@
 
 Adapter interface contracts for Lakeraven healthcare integrations, plus Mock implementations for development and testing.
 
-This is the stable interface layer that engines like [`corvid`](https://github.com/lakeraven/corvid) and [`lakeraven-ehr`](https://github.com/lakeraven/lakeraven-ehr) depend on. Concrete backend implementations live in sibling gems in this monorepo (`lakeraven-rpms`, `lakeraven-fhir`, `lakeraven-directx12`) or in separate private gems.
+This is the stable interface layer that engines like [`corvid`](https://github.com/lakeraven/corvid) and [`lakeraven-ehr`](https://github.com/lakeraven/lakeraven-ehr) depend on. Concrete backend implementations live in sibling gems in this monorepo (`lakeraven-rpms`, `lakeraven-fhir`, `lakeraven-x12`) or in separate private gems.
 
 ## What's in here
 
