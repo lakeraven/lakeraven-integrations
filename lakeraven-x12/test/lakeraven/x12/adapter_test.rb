@@ -3,7 +3,7 @@
 require "test_helper"
 
 module Lakeraven
-  module DirectX12
+  module X12
     class AdapterTest < Minitest::Test
       def setup
         @adapter = Adapter.new(

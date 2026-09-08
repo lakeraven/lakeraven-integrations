@@ -79,7 +79,7 @@ module Lakeraven
       # -- Adapter-needed supplemental fields --
       #
       # These are Lakeraven extensions beyond the strict FHIR R4 CER shape,
-      # carried on the decorator so adapters (DirectX12, commercial clearinghouses) have all the
+      # carried on the decorator so adapters (lakeraven-x12, commercial clearinghouses) have all the
       # data they need to build their vendor payloads. They are NOT serialized
       # into the wrapped FHIR resource; they live in the decorator only.
 

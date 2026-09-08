@@ -8,7 +8,7 @@ require "lakeraven/fhir"
 require "lakeraven/integrations/edi/base"
 
 module Lakeraven
-  module DirectX12
+  module X12
     # Generic X12 EDI adapter for direct clearinghouse communication.
     #
     # Generates raw X12 transactions and submits via configurable transport
@@ -17,7 +17,7 @@ module Lakeraven
     #
     # This is the public vendor-lock hedge: any Lakeraven customer can
     # self-host the public stack (corvid + lakeraven-integrations +
-    # lakeraven-directx12) and bring their own clearinghouse contract,
+    # lakeraven-x12) and bring their own clearinghouse contract,
     # with no dependency on any private commercial adapter gem.
     #
     # For vendor-specific clearinghouse integrations, see private gems
@@ -53,11 +53,11 @@ module Lakeraven
       end
 
       def process_remittance(remittance_reference_or_data)
-        # DirectX12 operates on pre-received remittance data (push model or
+        # This adapter operates on pre-received remittance data (push model or
         # parsed 835 file) — it does not fetch by ID from any backend service.
         unless remittance_reference_or_data.is_a?(Hash)
           raise ArgumentError,
-            "DirectX12#process_remittance requires a pre-parsed remittance " \
+            "Lakeraven::X12::Adapter#process_remittance requires a pre-parsed remittance " \
             "data hash. Fetching by identifier is not supported."
         end
 

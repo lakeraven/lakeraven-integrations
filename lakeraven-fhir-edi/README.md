@@ -1,8 +1,10 @@
-# lakeraven-fhir-models
+# lakeraven-fhir-edi
 
-FHIR R4 resource type definitions used by Lakeraven engines and integration adapters.
+FHIR R4 decorators carrying EDI/PRC transaction semantics, used by Lakeraven engines and integration adapters: PRC coverage statuses, 837 accessors, eligibility side-attributes on top of the standard FHIR R4 financial-module resources.
 
-Each class is an ActiveModel value object representing a FHIR R4 resource, with typed attributes, validations, and `to_fhir` / `from_fhir` round-trip serialization.
+Each class is an ActiveModel value object decorating a FHIR R4 resource, with typed attributes, validations, and `to_fhir` / `from_fhir` round-trip serialization.
+
+Note: the gem is named `lakeraven-fhir-edi`, but it is required as `lakeraven/fhir` and defines the `Lakeraven::Fhir::*` namespace.
 
 ## Included resources
 

@@ -3,7 +3,7 @@ source "https://rubygems.org"
 gemspec
 
 # Sibling gem in the monorepo, resolved via path during dev.
-gem "lakeraven-fhir-models", path: "../lakeraven-fhir-models"
+gem "lakeraven-fhir-edi", path: "../lakeraven-fhir-edi"
 
 gem "rake", "~> 13.0"
 gem "minitest", "~> 5.0"

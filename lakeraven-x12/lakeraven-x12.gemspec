@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-require_relative "lib/lakeraven/directx12/version"
+require_relative "lib/lakeraven/x12/version"
 
 Gem::Specification.new do |spec|
-  spec.name        = "lakeraven-directx12"
-  spec.version     = Lakeraven::DirectX12::VERSION
+  spec.name        = "lakeraven-x12"
+  spec.version     = Lakeraven::X12::VERSION
   spec.authors     = ["Lakeraven"]
   spec.email       = ["eng@lakeraven.com"]
   spec.homepage    = "https://github.com/lakeraven/lakeraven-integrations"
@@ -18,7 +18,7 @@ Gem::Specification.new do |spec|
   spec.license     = "MIT"
   spec.metadata    = {
     "homepage_uri"      => "https://github.com/lakeraven/lakeraven-integrations",
-    "source_code_uri"   => "https://github.com/lakeraven/lakeraven-integrations/tree/main/lakeraven-directx12"
+    "source_code_uri"   => "https://github.com/lakeraven/lakeraven-integrations/tree/main/lakeraven-x12"
   }
 
   spec.required_ruby_version = ">= 3.4.0"

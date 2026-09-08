@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gem: [lakeraven-integrations, lakeraven-fhir-models, lakeraven-directx12]
+        gem: [lakeraven-integrations, lakeraven-fhir-edi, lakeraven-x12]
     defaults:
       run:
         working-directory: ${{ matrix.gem }}

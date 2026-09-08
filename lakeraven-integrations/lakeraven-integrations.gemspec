@@ -14,7 +14,7 @@ Gem::Specification.new do |spec|
                      "claim status, remittance), denial management, coding, dictation, imaging, " \
                      "and other healthcare integration categories, plus Mock implementations " \
                      "for dev/test. Concrete backend implementations live in sibling gems " \
-                     "(lakeraven-rpms, lakeraven-fhir, lakeraven-directx12) or private gems."
+                     "(lakeraven-rpms, lakeraven-fhir, lakeraven-x12) or private gems."
   spec.license     = "MIT"
   spec.metadata    = {
     "homepage_uri"      => "https://github.com/lakeraven/lakeraven-integrations",
@@ -31,7 +31,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   # Core gem is deliberately Rails-free. Money fields use integer cents.
-  # Depends on lakeraven-fhir-models for FHIR R4 request/response types
+  # Depends on lakeraven-fhir-edi for FHIR R4 request/response types
   # on the Edi::Base interface.
-  spec.add_dependency "lakeraven-fhir-models", "~> 0.1"
+  spec.add_dependency "lakeraven-fhir-edi", "~> 0.1"
 end
