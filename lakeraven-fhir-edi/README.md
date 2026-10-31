@@ -38,4 +38,4 @@ reconstructed = Lakeraven::Fhir::CoverageEligibilityRequest.from_fhir(fhir_hash)
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
