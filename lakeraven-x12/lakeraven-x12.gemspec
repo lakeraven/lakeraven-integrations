@@ -15,7 +15,7 @@ Gem::Specification.new do |spec|
                      "standard X12 270/837/276/835 transactions. Serves as the public " \
                      "vendor-lock hedge: any Lakeraven customer can self-host the " \
                      "public stack and bring their own clearinghouse contract."
-  spec.license     = "MIT"
+  spec.license     = "Apache-2.0"
   spec.metadata    = {
     "homepage_uri"      => "https://github.com/lakeraven/lakeraven-integrations",
     "source_code_uri"   => "https://github.com/lakeraven/lakeraven-integrations/tree/main/lakeraven-x12"
@@ -24,7 +24,7 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = ">= 3.4.0"
 
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
-    Dir["lib/**/*", "README.md"]
+    Dir["lib/**/*", "README.md", "LICENSE", "NOTICE"]
   end
 
   spec.require_paths = ["lib"]

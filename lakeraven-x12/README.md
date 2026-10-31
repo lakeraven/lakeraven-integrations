@@ -31,4 +31,4 @@ should either extend this adapter or use a commercial clearinghouse adapter from
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

@@ -17,7 +17,7 @@ Gem::Specification.new do |spec|
                      "attributes and validations; each class supports to_fhir / from_fhir " \
                      "round-trip. Note: the gem is named lakeraven-fhir-edi but is required " \
                      "as lakeraven/fhir and defines the Lakeraven::Fhir::* namespace."
-  spec.license     = "MIT"
+  spec.license     = "Apache-2.0"
   spec.metadata    = {
     "homepage_uri"      => "https://github.com/lakeraven/lakeraven-integrations",
     "source_code_uri"   => "https://github.com/lakeraven/lakeraven-integrations/tree/main/lakeraven-fhir-edi"
@@ -26,7 +26,7 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = ">= 3.4.0"
 
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
-    Dir["lib/**/*", "README.md"]
+    Dir["lib/**/*", "README.md", "LICENSE", "NOTICE"]
   end
 
   spec.require_paths = ["lib"]

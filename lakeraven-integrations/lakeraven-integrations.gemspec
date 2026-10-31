@@ -15,7 +15,7 @@ Gem::Specification.new do |spec|
                      "and other healthcare integration categories, plus Mock implementations " \
                      "for dev/test. Concrete backend implementations live in sibling gems " \
                      "(lakeraven-rpms, lakeraven-fhir, lakeraven-x12) or private gems."
-  spec.license     = "MIT"
+  spec.license     = "Apache-2.0"
   spec.metadata    = {
     "homepage_uri"      => "https://github.com/lakeraven/lakeraven-integrations",
     "source_code_uri"   => "https://github.com/lakeraven/lakeraven-integrations/tree/main/lakeraven-integrations",
@@ -25,7 +25,7 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = ">= 3.4.0"
 
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
-    Dir["lib/**/*", "README.md"]
+    Dir["lib/**/*", "README.md", "LICENSE", "NOTICE"]
   end
 
   spec.require_paths = ["lib"]
